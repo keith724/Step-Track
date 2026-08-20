@@ -417,7 +417,9 @@ function renderChallengeBanner(){
 
 async function refreshBoard(){
   const boardEl = document.getElementById("board-list");
+  const noteEl = document.getElementById("board-coverage-note");
   boardEl.innerHTML = `<div class="empty">Loading leaderboard...</div>`;
+  noteEl.style.display = "none";
   const range = document.getElementById("board-range").value;
   const unit = getDistanceUnit();
   const sortMode = document.querySelector('input[name="board-sort"]:checked').value;
@@ -429,37 +431,67 @@ async function refreshBoard(){
 
   try{
     let query = db.collection("entries").where("teamId", "==", viewingTeamId);
+    let windowStart = null; // the date this range is "supposed" to start from, for coverage checking
     if(range === "challenge"){
       query = query.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
+      windowStart = challenge.startDate;
     }else if(range === "today"){
       query = query.where("date", "==", todayStr());
     }else if(range !== "alltime"){
-      query = query.where("date", ">=", daysAgoStr(parseInt(range, 10)));
+      windowStart = daysAgoStr(parseInt(range, 10));
+      query = query.where("date", ">=", windowStart);
     }
+    // "alltime" is intentionally left unbounded — we need every member's
+    // full history to work out the common start date below.
     const entriesSnap = await query.get();
     const usersSnap = await db.collection("users").where("teamId", "==", viewingTeamId).get();
 
     const users = {};
     usersSnap.forEach(d => users[d.id] = d.data());
 
-    // Work out how many days this range actually spans, so "average per
-    // day" means the same thing for every row.
+    // Each member's earliest entry date within whatever we just fetched.
+    const memberEarliest = {};
+    entriesSnap.forEach(d => {
+      const e = d.data();
+      if(!(e.member in memberEarliest) || e.date < memberEarliest[e.member]) memberEarliest[e.member] = e.date;
+    });
+
+    let usableDocs = entriesSnap.docs;
     let days;
+
     if(range === "today"){
       days = 1;
-    }else if(range === "7" || range === "30"){
-      days = parseInt(range, 10);
-    }else if(range === "challenge"){
-      days = daysBetweenInclusive(challenge.startDate, challenge.endDate < todayStr() ? challenge.endDate : todayStr());
+    }else if(range === "alltime"){
+      const idsWithData = Object.keys(memberEarliest);
+      if(idsWithData.length > 0){
+        const commonStart = idsWithData.reduce((max, id) => memberEarliest[id] > max ? memberEarliest[id] : max, idsWithData[0] && memberEarliest[idsWithData[0]]);
+        usableDocs = entriesSnap.docs.filter(d => d.data().date >= commonStart);
+        days = daysBetweenInclusive(commonStart, todayStr());
+        noteEl.textContent = `All-time totals start from ${commonStart} — the earliest date every current participant has data from.`;
+        noteEl.style.display = "block";
+      }else{
+        days = 1;
+      }
     }else{
-      // alltime: span from the earliest entry anyone on this team has logged, to today
-      let earliest = todayStr();
-      entriesSnap.forEach(d => { if(d.data().date < earliest) earliest = d.data().date; });
-      days = daysBetweenInclusive(earliest, todayStr());
+      // 7 days / 30 days / challenge: flag anyone whose data doesn't reach
+      // back to the start of the window (partial coverage skews their total).
+      days = range === "challenge"
+        ? daysBetweenInclusive(challenge.startDate, challenge.endDate < todayStr() ? challenge.endDate : todayStr())
+        : parseInt(range, 10);
+
+      const short = Object.keys(memberEarliest)
+        .filter(id => memberEarliest[id] > windowStart)
+        .map(id => (users[id] && users[id].name) || "Someone");
+
+      if(short.length > 0){
+        const label = range === "challenge" ? "the challenge period" : `the full ${range} days`;
+        noteEl.textContent = `Note: ${short.join(", ")} don't have data going back ${label} — their totals reflect fewer days.`;
+        noteEl.style.display = "block";
+      }
     }
 
     const totals = {};
-    entriesSnap.forEach(d => {
+    usableDocs.forEach(d => {
       const e = d.data();
       totals[e.member] = (totals[e.member] || 0) + e.steps;
     });
