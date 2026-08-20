@@ -172,6 +172,9 @@ async function boot(){
   await refreshBoard();
   await refreshWeight();
   await refreshWater();
+  updateWaterDateLabel();
+  await loadWeightForDate(todayStr());
+  await loadWaterInputForDate(todayStr());
 
   document.getElementById("board-range").addEventListener("change", refreshBoard);
 
@@ -220,20 +223,27 @@ function wireTabs(){
 
 /* ---------- Today (steps — shared/public within the group) ---------- */
 function wireToday(){
+  const dateInput = document.getElementById("steps-date");
+  dateInput.max = todayStr();
+  dateInput.value = todayStr();
+
+  dateInput.addEventListener("change", () => loadStepsForDate(dateInput.value));
+
   document.getElementById("save-steps").addEventListener("click", async () => {
     const val = parseInt(document.getElementById("steps-input").value, 10);
     if(isNaN(val) || val < 0){ toast("Enter a valid step count"); return; }
+    const date = dateInput.value || todayStr();
 
-    const id = `${uid}_${todayStr()}`;
+    const id = `${uid}_${date}`;
     try{
       await db.collection("entries").doc(id).set({
         member: uid,
         name: profile.name,
-        date: todayStr(),
+        date: date,
         steps: val,
         updatedAt: Date.now()
       });
-      toast("Saved!");
+      toast(date === todayStr() ? "Saved!" : `Saved for ${date}`);
       await refreshToday();
       await refreshHistory();
       await refreshBoard();
@@ -244,12 +254,26 @@ function wireToday(){
   });
 }
 
+async function loadStepsForDate(date){
+  const label = document.getElementById("steps-input-label");
+  label.textContent = date === todayStr() ? "Steps" : `Steps (editing ${date})`;
+  try{
+    const snap = await db.collection("entries").doc(`${uid}_${date}`).get();
+    document.getElementById("steps-input").value = snap.exists ? snap.data().steps : "";
+  }catch(e){
+    console.error(e);
+  }
+}
+
 async function refreshToday(){
   const snap = await db.collection("entries").doc(`${uid}_${todayStr()}`).get();
   const steps = snap.exists ? snap.data().steps : 0;
   document.getElementById("today-steps").textContent = steps.toLocaleString();
   document.getElementById("today-distance").textContent = fmtKm(steps, computeStride(profile));
-  if(steps) document.getElementById("steps-input").value = steps;
+  const dateInput = document.getElementById("steps-date");
+  if(dateInput.value === todayStr() && steps){
+    document.getElementById("steps-input").value = steps;
+  }
 }
 
 async function refreshHistory(){
@@ -348,6 +372,19 @@ async function refreshBoard(){
 
 /* ---------- Wellness: weight + water — private, stored under users/{uid}/... ---------- */
 function wireWellness(){
+  const weightDate = document.getElementById("weight-date");
+  weightDate.max = todayStr();
+  weightDate.value = todayStr();
+  weightDate.addEventListener("change", () => loadWeightForDate(weightDate.value));
+
+  const waterDate = document.getElementById("water-date");
+  waterDate.max = todayStr();
+  waterDate.value = todayStr();
+  waterDate.addEventListener("change", () => {
+    updateWaterDateLabel();
+    loadWaterInputForDate(waterDate.value);
+  });
+
   document.querySelectorAll('input[name="weight-unit"]').forEach(radio => {
     radio.addEventListener("change", async () => {
       profile.weightUnit = radio.value;
@@ -361,11 +398,12 @@ function wireWellness(){
     const raw = parseFloat(document.getElementById("weight-input").value);
     if(isNaN(raw) || raw <= 0){ toast("Enter a valid weight"); return; }
     const weightKg = +unitToKg(raw, profile.weightUnit).toFixed(2);
+    const date = weightDate.value || todayStr();
     try{
-      await db.collection("users").doc(uid).collection("weightLogs").doc(todayStr()).set({
-        date: todayStr(), weightKg, updatedAt: Date.now()
+      await db.collection("users").doc(uid).collection("weightLogs").doc(date).set({
+        date: date, weightKg, updatedAt: Date.now()
       });
-      toast("Weight saved");
+      toast(date === todayStr() ? "Weight saved" : `Weight saved for ${date}`);
       await refreshWeight();
     }catch(e){
       console.error(e);
@@ -376,14 +414,16 @@ function wireWellness(){
   document.querySelectorAll("[data-add]").forEach(btn => {
     btn.addEventListener("click", async () => {
       const add = parseInt(btn.dataset.add, 10);
+      const date = waterDate.value || todayStr();
       try{
-        await db.collection("users").doc(uid).collection("waterLogs").doc(todayStr()).set({
-          date: todayStr(),
+        await db.collection("users").doc(uid).collection("waterLogs").doc(date).set({
+          date: date,
           ml: firebase.firestore.FieldValue.increment(add),
           updatedAt: Date.now()
         }, { merge: true });
-        toast(`+${add}ml`);
+        toast(date === todayStr() ? `+${add}ml` : `+${add}ml on ${date}`);
         await refreshWater();
+        await loadWaterInputForDate(date);
       }catch(e){
         console.error(e);
         toast("Couldn't save — check your connection");
@@ -394,17 +434,43 @@ function wireWellness(){
   document.getElementById("save-water").addEventListener("click", async () => {
     const val = parseInt(document.getElementById("water-input").value, 10);
     if(isNaN(val) || val < 0){ toast("Enter a valid amount"); return; }
+    const date = waterDate.value || todayStr();
     try{
-      await db.collection("users").doc(uid).collection("waterLogs").doc(todayStr()).set({
-        date: todayStr(), ml: val, updatedAt: Date.now()
+      await db.collection("users").doc(uid).collection("waterLogs").doc(date).set({
+        date: date, ml: val, updatedAt: Date.now()
       });
-      toast("Water total set");
+      toast(date === todayStr() ? "Water total set" : `Water total set for ${date}`);
       await refreshWater();
     }catch(e){
       console.error(e);
       toast("Couldn't save — check your connection");
     }
   });
+}
+
+async function loadWeightForDate(date){
+  try{
+    const snap = await db.collection("users").doc(uid).collection("weightLogs").doc(date).get();
+    const input = document.getElementById("weight-input");
+    input.value = snap.exists ? kgToUnit(snap.data().weightKg, profile.weightUnit).toFixed(1) : "";
+  }catch(e){
+    console.error(e);
+  }
+}
+
+function updateWaterDateLabel(){
+  const date = document.getElementById("water-date").value;
+  document.getElementById("water-date-label").textContent =
+    date === todayStr() ? "Date (quick-add buttons below apply to this date)" : `Date (editing ${date})`;
+}
+
+async function loadWaterInputForDate(date){
+  try{
+    const snap = await db.collection("users").doc(uid).collection("waterLogs").doc(date).get();
+    document.getElementById("water-input").value = snap.exists ? (snap.data().ml || 0) : "";
+  }catch(e){
+    console.error(e);
+  }
 }
 
 function updateWeightUnitLabel(){

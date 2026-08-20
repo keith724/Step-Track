@@ -53,9 +53,9 @@ header.top h1{ font-size: 26px; color: var(--chalk); }
 header.top p{ margin:4px 0 0; font-size: 13px; color: rgba(245,241,232,0.85); }
 
 .brand-row{ display:flex; align-items:center; gap:10px; }
-.walker{ width: 26px; height: 40px; color: var(--chalk); flex-shrink:0; }
+.walker{ height: 40px; width: auto; flex-shrink:0; display:block; }
 .gate .brand-row{ justify-content:center; margin-bottom: 6px; }
-.gate .walker{ color: var(--track); width:24px; height:36px; }
+.gate .walker{ height:36px; }
 
 main{ max-width: 480px; margin: 0 auto; padding: 18px 16px 0; }
 

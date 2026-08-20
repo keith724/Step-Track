@@ -2,19 +2,13 @@
 // STEP 1 OF SETUP — paste your own Firebase project config here.
 // See SETUP.md for exactly how to get these values (takes ~5 min, free).
 // ============================================================
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyBlyRYmgQ2pjxDnDRU-fFTQU8xJbXisCz0",
-  authDomain: "step-track-100.firebaseapp.com",
-  projectId: "step-track-100",
-  storageBucket: "step-track-100.firebasestorage.app",
-  messagingSenderId: "394193007112",
-  appId: "1:394193007112:web:94491a29a1819b0fb917bd",
-  measurementId: "G-4H66H48RJB"
+  apiKey: "PASTE_YOUR_API_KEY",
+  authDomain: "PASTE_YOUR_PROJECT.firebaseapp.com",
+  projectId: "PASTE_YOUR_PROJECT_ID",
+  storageBucket: "PASTE_YOUR_PROJECT.appspot.com",
+  messagingSenderId: "PASTE_YOUR_SENDER_ID",
+  appId: "PASTE_YOUR_APP_ID"
 };
 
 // Real sign-in now happens via Firebase Authentication (email + password),

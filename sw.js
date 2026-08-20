@@ -1,4 +1,4 @@
-const CACHE_NAME = "step-track-v2";
+const CACHE_NAME = "step-track-v4";
 const SHELL_FILES = [
   "./index.html",
   "./style.css",
@@ -6,7 +6,8 @@ const SHELL_FILES = [
   "./firebase-config.js",
   "./manifest.json",
   "./icon-192.png",
-  "./icon-512.png"
+  "./icon-512.png",
+  "./walker.png"
 ];
 
 self.addEventListener("install", (event) => {
