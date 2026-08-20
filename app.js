@@ -98,6 +98,7 @@ let profile = null; // users/{uid} doc: { name, mode, heightCm, strideM, weightU
 let weightChart = null;
 let waterChart = null;
 let challenge = null; // config/challenge doc: { active, startDate, endDate }
+let viewingTeamId = null; // which team's leaderboard is currently shown (admin can change this)
 
 /* ---------- Auth gate UI wiring ---------- */
 const gateEl = document.getElementById("gate");
@@ -186,7 +187,9 @@ async function boot(){
   wireProfile();
   wireWellness();
   wireChallengeAdmin();
+  wireBoardTeamSwitcher();
 
+  viewingTeamId = profile.teamId;
   await refreshToday();
   await refreshHistory();
   await loadChallenge();
@@ -348,9 +351,29 @@ async function refreshHistory(){
 }
 
 /* ---------- Leaderboard (steps only — weight/water never appear here) ---------- */
+function wireBoardTeamSwitcher(){
+  const userEmail = (auth.currentUser.email || "").toLowerCase();
+  if(userEmail !== ADMIN_EMAIL.toLowerCase()) return;
+
+  const card = document.getElementById("board-admin-team-card");
+  const select = document.getElementById("board-team-select");
+  card.style.display = "block";
+
+  select.innerHTML = Object.values(TEAMS).map(t =>
+    `<option value="${t.id}">${t.name}</option>`
+  ).join("");
+  select.value = profile.teamId;
+
+  select.addEventListener("change", async () => {
+    viewingTeamId = select.value;
+    await loadChallenge();
+    await refreshBoard();
+  });
+}
+
 async function loadChallenge(){
   try{
-    const snap = await db.collection("challenges").doc(profile.teamId).get();
+    const snap = await db.collection("challenges").doc(viewingTeamId).get();
     challenge = snap.exists ? snap.data() : null;
   }catch(e){
     console.error(e);
@@ -391,14 +414,14 @@ async function refreshBoard(){
   }
 
   try{
-    let query = db.collection("entries").where("teamId", "==", profile.teamId);
+    let query = db.collection("entries").where("teamId", "==", viewingTeamId);
     if(range === "challenge"){
       query = query.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
     }else if(range !== "alltime"){
       query = query.where("date", ">=", daysAgoStr(parseInt(range, 10)));
     }
     const entriesSnap = await query.get();
-    const usersSnap = await db.collection("users").where("teamId", "==", profile.teamId).get();
+    const usersSnap = await db.collection("users").where("teamId", "==", viewingTeamId).get();
 
     const users = {};
     usersSnap.forEach(d => users[d.id] = d.data());

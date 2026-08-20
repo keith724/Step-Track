@@ -69,10 +69,12 @@ service cloud.firestore {
 
     // Step entries: readable only by signed-in members of the SAME team as
     // the entry (checked by looking up your own team on your users/ doc),
-    // and writable only by the entry's own owner, tagged to their own team.
+    // or by the keith@9cr.uk admin account viewing any team. Writable only
+    // by the entry's own owner, tagged to their own team.
     match /entries/{entryId} {
       allow read: if request.auth != null
-                  && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == resource.data.teamId;
+                  && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == resource.data.teamId
+                      || request.auth.token.email == 'keith@9cr.uk');
       allow create, update: if request.auth != null
                              && request.auth.uid == request.resource.data.member
                              && request.resource.data.teamId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
@@ -80,11 +82,13 @@ service cloud.firestore {
     }
 
     // Profile doc: name + stride + team settings. Readable by your own
-    // team-mates (needed for the leaderboard), writable only by the owner.
+    // team-mates (needed for the leaderboard) or the admin account viewing
+    // any team, writable only by the owner.
     match /users/{uid} {
       allow read: if request.auth != null
                   && (request.auth.uid == uid
-                      || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == resource.data.teamId);
+                      || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == resource.data.teamId
+                      || request.auth.token.email == 'keith@9cr.uk');
       allow write: if request.auth != null && request.auth.uid == uid;
 
       // Weight and water logs live *inside* each user's own document tree.
@@ -116,8 +120,8 @@ service cloud.firestore {
 
 Click **Publish**. From this point on:
 - Nobody can read or write anything without being signed in.
-- You can only ever see step totals, names, and challenge info for **your own team** — team 2's data is completely invisible to team 1's members, and vice versa, enforced by Firebase's servers, not the app's code.
-- Only the account owner can ever read or write their own weight/water logs.
+- You can only ever see step totals, names, and challenge info for **your own team** — team 2's data is completely invisible to team 1's members, and vice versa — except for the `keith@9cr.uk` admin account, which can view any team's leaderboard via the team picker on the Leaderboard tab.
+- Only the account owner can ever read or write their own weight/water logs — this stays true even for the admin account, since weight/water rules have no admin exception.
 - Only the account signed in as `keith@9cr.uk` can set or change challenge
   dates for either team.
 
