@@ -139,14 +139,16 @@ document.getElementById("signup-btn").addEventListener("click", async () => {
   errEl.textContent = "";
 
   if(!name){ errEl.textContent = "Enter your name."; return; }
-  if(invite !== GROUP_INVITE_CODE){ errEl.textContent = "That invite code doesn't match."; return; }
+  const team = TEAMS[invite];
+  if(!team){ errEl.textContent = "That invite code doesn't match."; return; }
   if(!email || !password){ errEl.textContent = "Enter an email and password."; return; }
 
   try{
     const cred = await auth.createUserWithEmailAndPassword(email, password);
     await cred.user.updateProfile({ displayName: name });
     await db.collection("users").doc(cred.user.uid).set({
-      name, mode: "default", weightUnit: "kg", heightUnit: "cm", joinedAt: Date.now()
+      name, mode: "default", weightUnit: "kg", heightUnit: "cm",
+      teamId: team.id, teamName: team.name, joinedAt: Date.now()
     });
     // onAuthStateChanged below picks up the new session and boots the app
   }catch(e){
@@ -177,7 +179,7 @@ async function boot(){
   appEl.style.display = "block";
 
   await loadProfile();
-  document.getElementById("header-sub").textContent = `Welcome back, ${profile.name}`;
+  document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${profile.teamName || ""}`;
 
   wireTabs();
   wireToday();
@@ -220,11 +222,23 @@ async function loadProfile(){
   if(!profile.weightUnit) profile.weightUnit = "kg";
   if(!profile.heightUnit) profile.heightUnit = "cm";
 
+  // Backfill: anyone who signed up before teams existed gets defaulted to
+  // the first team, so their existing entries and login keep working.
+  if(!profile.teamId){
+    const firstKey = Object.keys(TEAMS)[0];
+    profile.teamId = TEAMS[firstKey].id;
+    profile.teamName = TEAMS[firstKey].name;
+    await db.collection("users").doc(uid).set(
+      { teamId: profile.teamId, teamName: profile.teamName }, { merge: true }
+    );
+  }
+
   document.getElementById("profile-name").value = profile.name;
   document.getElementById("profile-mode").value = profile.mode || "default";
   document.querySelector(`input[name="height-unit"][value="${profile.heightUnit}"]`).checked = true;
   document.querySelector(`input[name="weight-unit"][value="${profile.weightUnit}"]`).checked = true;
   updateWeightUnitLabel();
+  document.getElementById("profile-team").textContent = profile.teamName || "";
 
   if(profile.heightCm){
     document.getElementById("profile-height-cm").value = profile.heightCm;
@@ -268,6 +282,7 @@ function wireToday(){
       await db.collection("entries").doc(id).set({
         member: uid,
         name: profile.name,
+        teamId: profile.teamId,
         date: date,
         steps: val,
         updatedAt: Date.now()
@@ -335,7 +350,7 @@ async function refreshHistory(){
 /* ---------- Leaderboard (steps only — weight/water never appear here) ---------- */
 async function loadChallenge(){
   try{
-    const snap = await db.collection("config").doc("challenge").get();
+    const snap = await db.collection("challenges").doc(profile.teamId).get();
     challenge = snap.exists ? snap.data() : null;
   }catch(e){
     console.error(e);
@@ -376,14 +391,14 @@ async function refreshBoard(){
   }
 
   try{
-    let query = db.collection("entries");
+    let query = db.collection("entries").where("teamId", "==", profile.teamId);
     if(range === "challenge"){
       query = query.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
     }else if(range !== "alltime"){
       query = query.where("date", ">=", daysAgoStr(parseInt(range, 10)));
     }
     const entriesSnap = await query.get();
-    const usersSnap = await db.collection("users").get();
+    const usersSnap = await db.collection("users").where("teamId", "==", profile.teamId).get();
 
     const users = {};
     usersSnap.forEach(d => users[d.id] = d.data());
@@ -447,14 +462,17 @@ function wireChallengeAdmin(){
 
   card.style.display = "block";
 
-  if(challenge){
-    if(challenge.startDate) document.getElementById("challenge-start").value = challenge.startDate;
-    if(challenge.endDate) document.getElementById("challenge-end").value = challenge.endDate;
-    const radio = document.querySelector(`input[name="challenge-active"][value="${challenge.active ? "on" : "off"}"]`);
-    if(radio) radio.checked = true;
-  }
+  const teamSelect = document.getElementById("challenge-team-select");
+  teamSelect.innerHTML = Object.values(TEAMS).map(t =>
+    `<option value="${t.id}">${t.name}</option>`
+  ).join("");
+  teamSelect.value = profile.teamId; // default to the admin's own team
+
+  loadChallengeIntoAdminForm(teamSelect.value);
+  teamSelect.addEventListener("change", () => loadChallengeIntoAdminForm(teamSelect.value));
 
   document.getElementById("save-challenge").addEventListener("click", async () => {
+    const teamId = teamSelect.value;
     const startDate = document.getElementById("challenge-start").value;
     const endDate = document.getElementById("challenge-end").value;
     const active = document.querySelector('input[name="challenge-active"]:checked').value === "on";
@@ -470,18 +488,36 @@ function wireChallengeAdmin(){
     }
 
     try{
-      await db.collection("config").doc("challenge").set({
+      await db.collection("challenges").doc(teamId).set({
         active, startDate, endDate, updatedAt: Date.now(), updatedBy: userEmail
       });
-      challenge = { active, startDate, endDate };
       statusEl.textContent = "Saved.";
-      renderChallengeBanner();
-      await refreshBoard();
+      if(teamId === profile.teamId){
+        challenge = { active, startDate, endDate };
+        renderChallengeBanner();
+        await refreshBoard();
+      }
     }catch(e){
       console.error(e);
       statusEl.textContent = "Couldn't save — check your connection.";
     }
   });
+}
+
+async function loadChallengeIntoAdminForm(teamId){
+  const statusEl = document.getElementById("challenge-admin-status");
+  statusEl.textContent = "";
+  try{
+    const snap = await db.collection("challenges").doc(teamId).get();
+    const data = snap.exists ? snap.data() : null;
+    document.getElementById("challenge-start").value = (data && data.startDate) || "";
+    document.getElementById("challenge-end").value = (data && data.endDate) || "";
+    const radio = document.querySelector(`input[name="challenge-active"][value="${data && data.active ? "on" : "off"}"]`);
+    if(radio) radio.checked = true;
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = "Couldn't load this team's challenge.";
+  }
 }
 
 /* ---------- Wellness: weight + water — private, stored under users/{uid}/... ---------- */
@@ -754,7 +790,7 @@ function wireProfile(){
     try{
       await db.collection("users").doc(uid).set(data, { merge: true });
       profile = Object.assign({}, profile, data);
-      document.getElementById("header-sub").textContent = `Welcome back, ${profile.name}`;
+      document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${profile.teamName || ""}`;
       toast("Profile saved");
       await refreshToday();
       await refreshHistory();

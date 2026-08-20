@@ -11,9 +11,17 @@ const firebaseConfig = {
   appId: "1:394193007112:web:94491a29a1819b0fb917bd"
 };
 
-// Real sign-in now happens via Firebase Authentication (email + password),
-// so accounts are properly separated per person. This invite code is just
-// an extra "friends only" gate on account creation — it's checked in the
-// app's code, not enforced by the database, so treat it as a courtesy
-// lock, not real security. Change it to whatever you like.
-const GROUP_INVITE_CODE = "walking26";
+// Real sign-in happens via Firebase Authentication (email + password), so
+// accounts are properly separated per person. Each invite code below maps
+// to a completely separate team — separate leaderboard, separate members,
+// separate challenge dates. Teams never see each other's data; this is
+// enforced by the Firestore security rules (see SETUP.md), not just hidden
+// in the app's code.
+//
+// Add as many teams as you like. "id" must be unique and, once people have
+// started signing up with a code, shouldn't be changed (it's how existing
+// members stay linked to their team).
+const TEAMS = {
+  "walking26": { id: "team-1", name: "Marsh Lads" },
+  "walk2026": { id: "team-2", name: "Team 2" }
+};

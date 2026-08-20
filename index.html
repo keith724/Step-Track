@@ -194,6 +194,10 @@
     <section id="view-profile" class="view">
       <div class="card">
         <span class="eyebrow">Your profile</span>
+        <div class="row between" style="margin-bottom:12px;">
+          <span style="font-size:13px; color:var(--gray);">Team</span>
+          <span class="mono" id="profile-team" style="font-size:13px;"></span>
+        </div>
         <div style="margin-bottom:12px;">
           <label>Name</label>
           <input type="text" id="profile-name">
@@ -251,6 +255,10 @@
         <span class="eyebrow">🏁 Challenge admin</span>
         <p style="font-size:12px; color:var(--gray); margin:0 0 14px;">Only your account can see or change this.</p>
 
+        <div style="margin-bottom:12px;">
+          <label>Team</label>
+          <select id="challenge-team-select"></select>
+        </div>
         <div style="margin-bottom:12px;">
           <label>Start date</label>
           <input type="date" id="challenge-start">

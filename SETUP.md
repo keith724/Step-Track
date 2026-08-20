@@ -27,9 +27,10 @@ Total setup time: ~20 minutes, done once by whoever's setting this up for the gr
    **</> (Web)** icon, give it a nickname, and click **Register app**.
 6. Firebase will show you a `firebaseConfig` object. Copy the values into
    `firebase-config.js` in this folder, replacing the `PASTE_YOUR_...` placeholders.
-7. In that same file, set `GROUP_INVITE_CODE` to any word your friends will enter
-   when they create their account — see the security note in step 3 for what this
-   does and doesn't protect against.
+7. In that same file, edit the `TEAMS` object to set up your team(s) — each
+   entry maps an invite code to a completely separate team (own leaderboard,
+   own members, own challenge dates). See "Adding a second team" further
+   down for details.
 
 ---
 
@@ -66,26 +67,30 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Step entries: any signed-in group member can read (needed for the
-    // shared leaderboard), but you can only write your own entries.
+    // Step entries: readable only by signed-in members of the SAME team as
+    // the entry (checked by looking up your own team on your users/ doc),
+    // and writable only by the entry's own owner, tagged to their own team.
     match /entries/{entryId} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null
+                  && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == resource.data.teamId;
       allow create, update: if request.auth != null
-                             && request.auth.uid == request.resource.data.member;
-      allow delete: if request.auth != null
-                    && request.auth.uid == resource.data.member;
+                             && request.auth.uid == request.resource.data.member
+                             && request.resource.data.teamId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId;
+      allow delete: if request.auth != null && request.auth.uid == resource.data.member;
     }
 
-    // Profile doc: name + stride settings. Readable by the group (needed to
-    // show names and compute distance on the leaderboard), writable only by
-    // the owner.
+    // Profile doc: name + stride + team settings. Readable by your own
+    // team-mates (needed for the leaderboard), writable only by the owner.
     match /users/{uid} {
-      allow read: if request.auth != null;
+      allow read: if request.auth != null
+                  && (request.auth.uid == uid
+                      || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == resource.data.teamId);
       allow write: if request.auth != null && request.auth.uid == uid;
 
       // Weight and water logs live *inside* each user's own document tree.
       // Only that exact uid can read or write them — nobody else, including
-      // other signed-in group members, can reach these paths.
+      // other signed-in group members (even on the same team), can reach
+      // these paths.
       match /weightLogs/{date} {
         allow read, write: if request.auth != null && request.auth.uid == uid;
       }
@@ -94,12 +99,14 @@ service cloud.firestore {
       }
     }
 
-    // Challenge settings (start/finish dates, on/off). Every signed-in
-    // member can read it (so the leaderboard can show the banner and filter
-    // by it), but only your account can ever change it — checked against
-    // the email on your Firebase Auth token, not just hidden in the UI.
-    match /config/challenge {
-      allow read: if request.auth != null;
+    // Challenge settings, one doc per team (doc ID = team ID). Every
+    // signed-in member can read their OWN team's challenge doc (for the
+    // banner/filter); only keith@9cr.uk can read or write ANY team's
+    // challenge doc, which is what lets one admin manage every team.
+    match /challenges/{teamId} {
+      allow read: if request.auth != null
+                  && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.teamId == teamId
+                      || request.auth.token.email == 'keith@9cr.uk');
       allow write: if request.auth != null
                    && request.auth.token.email == 'keith@9cr.uk';
     }
@@ -109,12 +116,10 @@ service cloud.firestore {
 
 Click **Publish**. From this point on:
 - Nobody can read or write anything without being signed in.
-- Everyone can see everyone's step totals and names (for the leaderboard).
-- Only the account owner can ever read or write their own weight/water logs —
-  this is enforced by Firebase's servers, not by the app's code.
-- Only the account signed in as `keith@9cr.uk` can set or change the challenge
-  dates — also enforced by Firebase's servers, so nobody can bypass it just by
-  editing the page.
+- You can only ever see step totals, names, and challenge info for **your own team** — team 2's data is completely invisible to team 1's members, and vice versa, enforced by Firebase's servers, not the app's code.
+- Only the account owner can ever read or write their own weight/water logs.
+- Only the account signed in as `keith@9cr.uk` can set or change challenge
+  dates for either team.
 
 ---
 
@@ -156,15 +161,51 @@ the same email/password — their data follows their account, not the device.
 
 ---
 
+## Adding a second team (or third, fourth...)
+
+Open `firebase-config.js` and look at the `TEAMS` object:
+
+```javascript
+const TEAMS = {
+  "walking26": { id: "team-1", name: "Keith's Squad" },
+  "CHANGE_ME": { id: "team-2", name: "Second Team" }
+};
+```
+
+- The key (`"walking26"`, `"CHANGE_ME"`) is the invite code people type in at
+  sign-up.
+- `id` must be unique per team and, once anyone has signed up using that
+  team's code, shouldn't be changed — it's the permanent link between a
+  member and their team's data.
+- `name` is just the friendly label shown in the app (welcome message,
+  leaderboard admin dropdown).
+
+Rename `"CHANGE_ME"` to whatever invite code the second team should use, and
+change `"Second Team"` to their actual name. Add more entries the same way
+for further teams.
+
+**What each team gets:** their own completely separate leaderboard, member
+list, and challenge dates — invisible to other teams, enforced by the
+Firestore rules above, not just hidden in the app. Everyone signs in through
+the exact same app URL; the invite code they use at sign-up is what silently
+assigns them to their team.
+
+**What's shared across teams:** only the `keith@9cr.uk` admin account, which
+can set challenge dates for any team via a team picker in its Profile tab.
+Regular members of one team have no visibility into another team's admin
+controls, or any of their data.
+
+---
+
 ## What the invite code does and doesn't do
 
-`GROUP_INVITE_CODE` in `firebase-config.js` is checked in the app's JavaScript
-when someone creates an account — it's a friendly speed bump so a random
-person who finds your URL can't just sign up, not a cryptographic secret
-(anyone could technically read it from the page source). The real security is
-the Firestore rules in step 3, which control what a signed-in account can
-actually read or write regardless of how they signed up. For a private friend
-group this two-layer approach (soft gate on signup + hard rules on data
-access) is a reasonable balance of simplicity and privacy. If you later want
-to remove the invite code entirely and instead approve members by hand, or
-add password reset emails, those are both small additions — just ask.
+Each code in `TEAMS` is checked in the app's JavaScript at sign-up — a
+friendly speed bump so a random person who finds your URL can't just sign up
+as either team, not a cryptographic secret (anyone could technically read the
+codes from the page source). The real security is the Firestore rules above,
+which control what a signed-in account can actually read or write regardless
+of how they signed up. For a private friend-group setup, this two-layer
+approach (soft gate on signup + hard rules on data access) is a reasonable
+balance of simplicity and privacy. If you later want to remove the invite
+codes entirely and instead approve members by hand, or add password reset
+emails, those are both small additions — just ask.
