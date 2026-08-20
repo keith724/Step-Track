@@ -20,6 +20,12 @@ function daysAgoStr(n){
   d.setDate(d.getDate() - n);
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 }
+function daysBetweenInclusive(startStr, endStr){
+  const start = new Date(startStr + "T00:00:00");
+  const end = new Date(endStr + "T00:00:00");
+  const diff = Math.round((end - start) / 86400000) + 1;
+  return Math.max(1, diff);
+}
 function shortDate(dateStr){
   const parts = dateStr.split("-");
   return `${parts[2]}/${parts[1]}`;
@@ -202,6 +208,9 @@ async function boot(){
   await loadWaterInputForDate(todayStr());
 
   document.getElementById("board-range").addEventListener("change", refreshBoard);
+  document.querySelectorAll('input[name="board-sort"]').forEach(radio => {
+    radio.addEventListener("change", refreshBoard);
+  });
 
   const savedDistanceUnit = getDistanceUnit();
   const distanceUnitRadio = document.querySelector(`input[name="board-unit"][value="${savedDistanceUnit}"]`);
@@ -411,6 +420,7 @@ async function refreshBoard(){
   boardEl.innerHTML = `<div class="empty">Loading leaderboard...</div>`;
   const range = document.getElementById("board-range").value;
   const unit = getDistanceUnit();
+  const sortMode = document.querySelector('input[name="board-sort"]:checked').value;
 
   if(range === "challenge" && (!challenge || !challenge.startDate || !challenge.endDate)){
     boardEl.innerHTML = `<div class="empty">No challenge has been set up yet.</div>`;
@@ -432,6 +442,22 @@ async function refreshBoard(){
     const users = {};
     usersSnap.forEach(d => users[d.id] = d.data());
 
+    // Work out how many days this range actually spans, so "average per
+    // day" means the same thing for every row.
+    let days;
+    if(range === "today"){
+      days = 1;
+    }else if(range === "7" || range === "30"){
+      days = parseInt(range, 10);
+    }else if(range === "challenge"){
+      days = daysBetweenInclusive(challenge.startDate, challenge.endDate < todayStr() ? challenge.endDate : todayStr());
+    }else{
+      // alltime: span from the earliest entry anyone on this team has logged, to today
+      let earliest = todayStr();
+      entriesSnap.forEach(d => { if(d.data().date < earliest) earliest = d.data().date; });
+      days = daysBetweenInclusive(earliest, todayStr());
+    }
+
     const totals = {};
     entriesSnap.forEach(d => {
       const e = d.data();
@@ -441,27 +467,32 @@ async function refreshBoard(){
     let rows = Object.keys(totals).map(id => {
       const m = users[id] || { name: "Friend" };
       const stride = computeStride(m);
-      return { id, name: m.name || "Friend", steps: totals[id], km: (totals[id] * stride) / 1000 };
+      const steps = totals[id];
+      return { id, name: m.name || "Friend", steps, km: (steps * stride) / 1000, avg: steps / days };
     });
 
     Object.keys(users).forEach(id => {
-      if(!(id in totals)) rows.push({ id, name: users[id].name || "Friend", steps: 0, km: 0 });
+      if(!(id in totals)) rows.push({ id, name: users[id].name || "Friend", steps: 0, km: 0, avg: 0 });
     });
 
-    rows.sort((a, b) => b.steps - a.steps);
+    rows.sort((a, b) => sortMode === "average" ? b.avg - a.avg : b.steps - a.steps);
 
     if(rows.length === 0){
       boardEl.innerHTML = `<div class="empty">No one has logged steps yet — be the first!</div>`;
       return;
     }
 
-    const max = Math.max(...rows.map(r => r.steps), 1);
+    const max = Math.max(...rows.map(r => sortMode === "average" ? r.avg : r.steps), 1);
     const medals = ["🥇", "🥈", "🥉"];
 
     boardEl.innerHTML = rows.map((r, i) => {
-      const pct = Math.min(100, (r.steps / max) * 100);
+      const metric = sortMode === "average" ? r.avg : r.steps;
+      const pct = Math.min(100, (metric / max) * 100);
       const isMe = r.id === uid;
       const dist = kmToDistanceUnit(r.km, unit);
+      const statLine = sortMode === "average"
+        ? `${Math.round(r.avg).toLocaleString()}/day avg · ${r.steps.toLocaleString()} total`
+        : `${r.steps.toLocaleString()} · ${dist.toFixed(1)}${distanceUnitLabel(unit)}`;
       return `<div class="lane" style="${isMe ? "outline:1px solid rgba(232,185,63,0.5);" : ""}">
         <div class="lane-top">
           <div class="lane-name">
@@ -469,7 +500,7 @@ async function refreshBoard(){
             <span>${r.name}${isMe ? " (you)" : ""}</span>
             ${medals[i] ? `<span class="medal">${medals[i]}</span>` : ""}
           </div>
-          <span class="mono" style="color:var(--gray);">${r.steps.toLocaleString()} · ${dist.toFixed(1)}${distanceUnitLabel(unit)}</span>
+          <span class="mono" style="color:var(--gray);">${statLine}</span>
         </div>
         <div class="lane-track">
           <div class="lane-fill" style="width:${pct}%"></div>
