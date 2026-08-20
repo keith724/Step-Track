@@ -104,6 +104,11 @@
 
     <!-- LEADERBOARD -->
     <section id="view-board" class="view">
+      <div id="challenge-banner" class="card" style="display:none; border-color: rgba(232,185,63,0.4);">
+        <span class="eyebrow">🏁 Challenge</span>
+        <div id="challenge-banner-text" style="font-size:14px;"></div>
+      </div>
+
       <div class="card">
         <div class="row between" style="margin-bottom:10px;">
           <span class="eyebrow" style="margin:0;">Leaderboard</span>
@@ -111,7 +116,12 @@
             <option value="7">Last 7 days</option>
             <option value="30">Last 30 days</option>
             <option value="alltime">All time</option>
+            <option value="challenge">Challenge</option>
           </select>
+        </div>
+        <div class="unit-toggle" id="board-unit-toggle" style="margin-bottom:14px;">
+          <label><input type="radio" name="board-unit" value="km" checked><span>km</span></label>
+          <label><input type="radio" name="board-unit" value="mi"><span>miles</span></label>
         </div>
         <div id="board-list"><div class="empty">Loading leaderboard...</div></div>
       </div>
@@ -235,6 +245,26 @@
           41.5% of height for an average adult. This is a rough guide, not a
           precise measurement — actual stride varies with pace, terrain and individual gait.
         </p>
+      </div>
+
+      <div class="card" id="admin-challenge-card" style="display:none; border-color: rgba(232,185,63,0.4);">
+        <span class="eyebrow">🏁 Challenge admin</span>
+        <p style="font-size:12px; color:var(--gray); margin:0 0 14px;">Only your account can see or change this.</p>
+
+        <div style="margin-bottom:12px;">
+          <label>Start date</label>
+          <input type="date" id="challenge-start">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label>Finish date</label>
+          <input type="date" id="challenge-end">
+        </div>
+        <div class="unit-toggle" id="challenge-active-toggle" style="margin-bottom:14px;">
+          <label><input type="radio" name="challenge-active" value="on"><span>On</span></label>
+          <label><input type="radio" name="challenge-active" value="off" checked><span>Off</span></label>
+        </div>
+        <button class="primary" id="save-challenge">Save challenge</button>
+        <div class="sub-number" id="challenge-admin-status" style="margin-top:10px;"></div>
       </div>
 
       <button class="ghost" id="logout-btn" style="margin-bottom:24px;">Log out</button>

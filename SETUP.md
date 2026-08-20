@@ -93,6 +93,16 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == uid;
       }
     }
+
+    // Challenge settings (start/finish dates, on/off). Every signed-in
+    // member can read it (so the leaderboard can show the banner and filter
+    // by it), but only your account can ever change it — checked against
+    // the email on your Firebase Auth token, not just hidden in the UI.
+    match /config/challenge {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && request.auth.token.email == 'keith@9cr.uk';
+    }
   }
 }
 ```
@@ -102,6 +112,9 @@ Click **Publish**. From this point on:
 - Everyone can see everyone's step totals and names (for the leaderboard).
 - Only the account owner can ever read or write their own weight/water logs —
   this is enforced by Firebase's servers, not by the app's code.
+- Only the account signed in as `keith@9cr.uk` can set or change the challenge
+  dates — also enforced by Firebase's servers, so nobody can bypass it just by
+  editing the page.
 
 ---
 

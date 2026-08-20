@@ -7,6 +7,8 @@ const DEFAULT_STRIDE_M = 0.759; // ~6'0" / 183cm average adult stride
 const LB_PER_KG = 2.20462;
 const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
+const MILES_PER_KM = 0.621371;
+const ADMIN_EMAIL = "keith@9cr.uk";
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function todayStr(){
@@ -65,6 +67,20 @@ function weightUnitLabel(unit){
   return unit === "lb" ? "lb" : unit === "stone" ? "stone" : "kg";
 }
 
+/* ---------- Board distance unit (device-local preference) ---------- */
+function getBoardUnit(){
+  return localStorage.getItem("ss_board_unit") || "km";
+}
+function setBoardUnit(unit){
+  localStorage.setItem("ss_board_unit", unit);
+}
+function kmToBoardUnit(km, unit){
+  return unit === "mi" ? km * MILES_PER_KM : km;
+}
+function boardUnitLabel(unit){
+  return unit === "mi" ? "mi" : "km";
+}
+
 /* ---------- Height helpers ---------- */
 function ftInToCm(feet, inches){
   return ((feet || 0) * 12 + (inches || 0)) * CM_PER_INCH;
@@ -81,6 +97,7 @@ let uid = null;
 let profile = null; // users/{uid} doc: { name, mode, heightCm, strideM, weightUnit, heightUnit }
 let weightChart = null;
 let waterChart = null;
+let challenge = null; // config/challenge doc: { active, startDate, endDate }
 
 /* ---------- Auth gate UI wiring ---------- */
 const gateEl = document.getElementById("gate");
@@ -166,9 +183,11 @@ async function boot(){
   wireToday();
   wireProfile();
   wireWellness();
+  wireChallengeAdmin();
 
   await refreshToday();
   await refreshHistory();
+  await loadChallenge();
   await refreshBoard();
   await refreshWeight();
   await refreshWater();
@@ -177,6 +196,16 @@ async function boot(){
   await loadWaterInputForDate(todayStr());
 
   document.getElementById("board-range").addEventListener("change", refreshBoard);
+
+  const savedBoardUnit = getBoardUnit();
+  const boardUnitRadio = document.querySelector(`input[name="board-unit"][value="${savedBoardUnit}"]`);
+  if(boardUnitRadio) boardUnitRadio.checked = true;
+  document.querySelectorAll('input[name="board-unit"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      setBoardUnit(radio.value);
+      refreshBoard();
+    });
+  });
 
   if("serviceWorker" in navigator){
     navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -304,14 +333,53 @@ async function refreshHistory(){
 }
 
 /* ---------- Leaderboard (steps only — weight/water never appear here) ---------- */
+async function loadChallenge(){
+  try{
+    const snap = await db.collection("config").doc("challenge").get();
+    challenge = snap.exists ? snap.data() : null;
+  }catch(e){
+    console.error(e);
+    challenge = null;
+  }
+  renderChallengeBanner();
+}
+
+function renderChallengeBanner(){
+  const banner = document.getElementById("challenge-banner");
+  const textEl = document.getElementById("challenge-banner-text");
+  if(!challenge || !challenge.active || !challenge.startDate || !challenge.endDate){
+    banner.style.display = "none";
+    return;
+  }
+  const today = todayStr();
+  let status;
+  if(today < challenge.startDate){
+    status = `Starts ${challenge.startDate}`;
+  }else if(today > challenge.endDate){
+    status = `Finished ${challenge.endDate}`;
+  }else{
+    status = `In progress — ends ${challenge.endDate}`;
+  }
+  textEl.textContent = `${challenge.startDate} → ${challenge.endDate} · ${status}`;
+  banner.style.display = "block";
+}
+
 async function refreshBoard(){
   const boardEl = document.getElementById("board-list");
   boardEl.innerHTML = `<div class="empty">Loading leaderboard...</div>`;
   const range = document.getElementById("board-range").value;
+  const unit = getBoardUnit();
+
+  if(range === "challenge" && (!challenge || !challenge.startDate || !challenge.endDate)){
+    boardEl.innerHTML = `<div class="empty">No challenge has been set up yet.</div>`;
+    return;
+  }
 
   try{
     let query = db.collection("entries");
-    if(range !== "alltime"){
+    if(range === "challenge"){
+      query = query.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
+    }else if(range !== "alltime"){
       query = query.where("date", ">=", daysAgoStr(parseInt(range, 10)));
     }
     const entriesSnap = await query.get();
@@ -349,6 +417,7 @@ async function refreshBoard(){
     boardEl.innerHTML = rows.map((r, i) => {
       const pct = Math.min(100, (r.steps / max) * 100);
       const isMe = r.id === uid;
+      const dist = kmToBoardUnit(r.km, unit);
       return `<div class="lane" style="${isMe ? "outline:1px solid rgba(232,185,63,0.5);" : ""}">
         <div class="lane-top">
           <div class="lane-name">
@@ -356,7 +425,7 @@ async function refreshBoard(){
             <span>${r.name}${isMe ? " (you)" : ""}</span>
             ${medals[i] ? `<span class="medal">${medals[i]}</span>` : ""}
           </div>
-          <span class="mono" style="color:var(--gray);">${r.steps.toLocaleString()} · ${r.km.toFixed(1)}km</span>
+          <span class="mono" style="color:var(--gray);">${r.steps.toLocaleString()} · ${dist.toFixed(1)}${boardUnitLabel(unit)}</span>
         </div>
         <div class="lane-track">
           <div class="lane-fill" style="width:${pct}%"></div>
@@ -368,6 +437,51 @@ async function refreshBoard(){
     console.error(e);
     boardEl.innerHTML = `<div class="empty">Couldn't load the leaderboard. If this is the first run, check the browser console — Firestore sometimes needs a one-click index link the first time.</div>`;
   }
+}
+
+/* ---------- Challenge admin (only keith@9cr.uk can see/edit this) ---------- */
+function wireChallengeAdmin(){
+  const card = document.getElementById("admin-challenge-card");
+  const userEmail = (auth.currentUser.email || "").toLowerCase();
+  if(userEmail !== ADMIN_EMAIL.toLowerCase()) return;
+
+  card.style.display = "block";
+
+  if(challenge){
+    if(challenge.startDate) document.getElementById("challenge-start").value = challenge.startDate;
+    if(challenge.endDate) document.getElementById("challenge-end").value = challenge.endDate;
+    const radio = document.querySelector(`input[name="challenge-active"][value="${challenge.active ? "on" : "off"}"]`);
+    if(radio) radio.checked = true;
+  }
+
+  document.getElementById("save-challenge").addEventListener("click", async () => {
+    const startDate = document.getElementById("challenge-start").value;
+    const endDate = document.getElementById("challenge-end").value;
+    const active = document.querySelector('input[name="challenge-active"]:checked').value === "on";
+    const statusEl = document.getElementById("challenge-admin-status");
+
+    if(active && (!startDate || !endDate)){
+      statusEl.textContent = "Set both a start and finish date before turning it on.";
+      return;
+    }
+    if(active && startDate > endDate){
+      statusEl.textContent = "Start date needs to be before the finish date.";
+      return;
+    }
+
+    try{
+      await db.collection("config").doc("challenge").set({
+        active, startDate, endDate, updatedAt: Date.now(), updatedBy: userEmail
+      });
+      challenge = { active, startDate, endDate };
+      statusEl.textContent = "Saved.";
+      renderChallengeBanner();
+      await refreshBoard();
+    }catch(e){
+      console.error(e);
+      statusEl.textContent = "Couldn't save — check your connection.";
+    }
+  });
 }
 
 /* ---------- Wellness: weight + water — private, stored under users/{uid}/... ---------- */
