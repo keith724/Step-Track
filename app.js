@@ -30,8 +30,8 @@ function computeStride(profile){
   if(profile.mode === "height" && profile.heightCm) return +(profile.heightCm * 0.415 / 100).toFixed(3);
   return DEFAULT_STRIDE_M;
 }
-function fmtKm(steps, strideM){
-  return ((steps * strideM) / 1000).toFixed(2) + " km";
+function fmtDistance(steps, strideM){
+  return kmToDistanceUnit((steps * strideM) / 1000, getDistanceUnit()).toFixed(2) + " " + distanceUnitLabel(getDistanceUnit());
 }
 function toast(msg){
   const t = document.getElementById("toast");
@@ -68,16 +68,17 @@ function weightUnitLabel(unit){
 }
 
 /* ---------- Board distance unit (device-local preference) ---------- */
-function getBoardUnit(){
-  return localStorage.getItem("ss_board_unit") || "km";
+/* ---------- Distance unit (device-local, applies app-wide) ---------- */
+function getDistanceUnit(){
+  return localStorage.getItem("ss_distance_unit") || "km";
 }
-function setBoardUnit(unit){
-  localStorage.setItem("ss_board_unit", unit);
+function setDistanceUnit(unit){
+  localStorage.setItem("ss_distance_unit", unit);
 }
-function kmToBoardUnit(km, unit){
+function kmToDistanceUnit(km, unit){
   return unit === "mi" ? km * MILES_PER_KM : km;
 }
-function boardUnitLabel(unit){
+function distanceUnitLabel(unit){
   return unit === "mi" ? "mi" : "km";
 }
 
@@ -202,13 +203,16 @@ async function boot(){
 
   document.getElementById("board-range").addEventListener("change", refreshBoard);
 
-  const savedBoardUnit = getBoardUnit();
-  const boardUnitRadio = document.querySelector(`input[name="board-unit"][value="${savedBoardUnit}"]`);
-  if(boardUnitRadio) boardUnitRadio.checked = true;
+  const savedDistanceUnit = getDistanceUnit();
+  const distanceUnitRadio = document.querySelector(`input[name="board-unit"][value="${savedDistanceUnit}"]`);
+  if(distanceUnitRadio) distanceUnitRadio.checked = true;
   document.querySelectorAll('input[name="board-unit"]').forEach(radio => {
-    radio.addEventListener("change", () => {
-      setBoardUnit(radio.value);
-      refreshBoard();
+    radio.addEventListener("change", async () => {
+      setDistanceUnit(radio.value);
+      await refreshToday();
+      await refreshHistory();
+      await refreshBoard();
+      updateProfilePreview();
     });
   });
 
@@ -316,7 +320,7 @@ async function refreshToday(){
   const snap = await db.collection("entries").doc(`${uid}_${todayStr()}`).get();
   const steps = snap.exists ? snap.data().steps : 0;
   document.getElementById("today-steps").textContent = steps.toLocaleString();
-  document.getElementById("today-distance").textContent = fmtKm(steps, computeStride(profile));
+  document.getElementById("today-distance").textContent = fmtDistance(steps, computeStride(profile));
   const dateInput = document.getElementById("steps-date");
   if(dateInput.value === todayStr() && steps){
     document.getElementById("steps-input").value = steps;
@@ -341,7 +345,7 @@ async function refreshHistory(){
       const e = d.data();
       return `<div class="history-item">
         <span class="date">${e.date}</span>
-        <span class="mono">${e.steps.toLocaleString()} steps · ${fmtKm(e.steps, stride)}</span>
+        <span class="mono">${e.steps.toLocaleString()} steps · ${fmtDistance(e.steps, stride)}</span>
       </div>`;
     }).join("");
   }catch(e){
@@ -406,7 +410,7 @@ async function refreshBoard(){
   const boardEl = document.getElementById("board-list");
   boardEl.innerHTML = `<div class="empty">Loading leaderboard...</div>`;
   const range = document.getElementById("board-range").value;
-  const unit = getBoardUnit();
+  const unit = getDistanceUnit();
 
   if(range === "challenge" && (!challenge || !challenge.startDate || !challenge.endDate)){
     boardEl.innerHTML = `<div class="empty">No challenge has been set up yet.</div>`;
@@ -455,7 +459,7 @@ async function refreshBoard(){
     boardEl.innerHTML = rows.map((r, i) => {
       const pct = Math.min(100, (r.steps / max) * 100);
       const isMe = r.id === uid;
-      const dist = kmToBoardUnit(r.km, unit);
+      const dist = kmToDistanceUnit(r.km, unit);
       return `<div class="lane" style="${isMe ? "outline:1px solid rgba(232,185,63,0.5);" : ""}">
         <div class="lane-top">
           <div class="lane-name">
@@ -463,7 +467,7 @@ async function refreshBoard(){
             <span>${r.name}${isMe ? " (you)" : ""}</span>
             ${medals[i] ? `<span class="medal">${medals[i]}</span>` : ""}
           </div>
-          <span class="mono" style="color:var(--gray);">${r.steps.toLocaleString()} · ${dist.toFixed(1)}${boardUnitLabel(unit)}</span>
+          <span class="mono" style="color:var(--gray);">${r.steps.toLocaleString()} · ${dist.toFixed(1)}${distanceUnitLabel(unit)}</span>
         </div>
         <div class="lane-track">
           <div class="lane-fill" style="width:${pct}%"></div>
@@ -851,6 +855,8 @@ function updateProfilePreview(){
 
   const tmp = { mode: mode, heightCm: heightCm, strideM: strideM };
   const stride = computeStride(tmp);
+  const unit = getDistanceUnit();
+  const dist = kmToDistanceUnit((10000*stride)/1000, unit);
   document.getElementById("profile-preview").textContent =
-    "Estimated stride: " + stride.toFixed(2) + " m · 10,000 steps ≈ " + ((10000*stride)/1000).toFixed(1) + " km";
+    "Estimated stride: " + stride.toFixed(2) + " m · 10,000 steps ≈ " + dist.toFixed(1) + " " + distanceUnitLabel(unit);
 }
