@@ -421,6 +421,8 @@ async function refreshBoard(){
     let query = db.collection("entries").where("teamId", "==", viewingTeamId);
     if(range === "challenge"){
       query = query.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
+    }else if(range === "today"){
+      query = query.where("date", "==", todayStr());
     }else if(range !== "alltime"){
       query = query.where("date", ">=", daysAgoStr(parseInt(range, 10)));
     }
