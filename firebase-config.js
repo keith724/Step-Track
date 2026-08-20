@@ -3,12 +3,12 @@
 // See SETUP.md for exactly how to get these values (takes ~5 min, free).
 // ============================================================
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY",
-  authDomain: "PASTE_YOUR_PROJECT.firebaseapp.com",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_PROJECT.appspot.com",
-  messagingSenderId: "PASTE_YOUR_SENDER_ID",
-  appId: "PASTE_YOUR_APP_ID"
+  apiKey: "AIzaSyBlyRYmgQ2pjxDnDRU-fFTQU8xJbXisCz0",
+  authDomain: "step-track-100.firebaseapp.com",
+  projectId: "step-track-100",
+  storageBucket: "step-track-100.firebasestorage.app",
+  messagingSenderId: "394193007112",
+  appId: "1:394193007112:web:94491a29a1819b0fb917bd"
 };
 
 // Real sign-in now happens via Firebase Authentication (email + password),
@@ -16,4 +16,4 @@ const firebaseConfig = {
 // an extra "friends only" gate on account creation — it's checked in the
 // app's code, not enforced by the database, so treat it as a courtesy
 // lock, not real security. Change it to whatever you like.
-const GROUP_INVITE_CODE = "walkies2026";
+const GROUP_INVITE_CODE = "walking26";
