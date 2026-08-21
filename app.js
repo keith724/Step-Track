@@ -434,8 +434,8 @@ async function refreshHistory(){
       if(stepsChart){ stepsChart.destroy(); stepsChart = null; }
       return;
     }
-    const activeView = document.querySelector('input[name="history-view"]:checked').value;
-    renderHistoryView(activeView);
+    const activeViewRadio = document.querySelector('input[name="history-view"]:checked');
+    renderHistoryView(activeViewRadio ? activeViewRadio.value : "list");
   }catch(e){
     console.error(e);
     listEl.innerHTML = `<div class="empty">Couldn't load history yet. If this is the first run, Firestore may need a moment to build an index — check the browser console for a one-click link.</div>`;
@@ -557,9 +557,17 @@ async function refreshBoard(){
   const noteEl = document.getElementById("board-coverage-note");
   boardEl.innerHTML = `<div class="empty">Loading leaderboard...</div>`;
   noteEl.style.display = "none";
-  const range = document.getElementById("board-range").value;
+
+  // Read every bit of page state defensively — if someone's browser has a
+  // slightly stale copy of the page (e.g. mid-update, before a reload),
+  // a missing element here should never be able to silently crash the
+  // function and leave the screen stuck on "Loading...". Fall back to
+  // sensible defaults instead.
+  const rangeEl = document.getElementById("board-range");
+  const range = rangeEl ? rangeEl.value : "7";
   const unit = getDistanceUnit();
-  const sortMode = document.querySelector('input[name="board-sort"]:checked').value;
+  const sortRadio = document.querySelector('input[name="board-sort"]:checked');
+  const sortMode = sortRadio ? sortRadio.value : "total";
 
   if(range === "challenge" && (!challenge || !challenge.startDate || !challenge.endDate)){
     boardEl.innerHTML = `<div class="empty">No challenge has been set up yet.</div>`;
@@ -749,7 +757,8 @@ function wireChallengeAdmin(){
     const teamId = teamSelect.value;
     const startDate = document.getElementById("challenge-start").value;
     const endDate = document.getElementById("challenge-end").value;
-    const active = document.querySelector('input[name="challenge-active"]:checked').value === "on";
+    const activeRadio = document.querySelector('input[name="challenge-active"]:checked');
+    const active = activeRadio ? activeRadio.value === "on" : false;
     const statusEl = document.getElementById("challenge-admin-status");
 
     if(active && (!startDate || !endDate)){
@@ -1060,7 +1069,8 @@ function wireProfile(){
   document.getElementById("save-profile").addEventListener("click", async () => {
     const name = document.getElementById("profile-name").value.trim() || profile.name;
     const mode = document.getElementById("profile-mode").value;
-    const heightUnit = document.querySelector('input[name="height-unit"]:checked').value;
+    const heightUnitRadio = document.querySelector('input[name="height-unit"]:checked');
+    const heightUnit = heightUnitRadio ? heightUnitRadio.value : "cm";
     const strideM = parseFloat(document.getElementById("profile-stride").value) || null;
 
     let heightCm = null;
@@ -1096,14 +1106,16 @@ function updateProfileVisibility(){
   document.getElementById("profile-height-row").style.display = mode === "height" ? "block" : "none";
   document.getElementById("profile-stride-row").style.display = mode === "manual" ? "block" : "none";
 
-  const heightUnit = document.querySelector('input[name="height-unit"]:checked').value;
+  const heightUnitRadio1 = document.querySelector('input[name="height-unit"]:checked');
+  const heightUnit = heightUnitRadio1 ? heightUnitRadio1.value : "cm";
   document.getElementById("height-cm-row").style.display = heightUnit === "cm" ? "block" : "none";
   document.getElementById("height-ftin-row").style.display = heightUnit === "ftin" ? "flex" : "none";
 }
 
 function updateProfilePreview(){
   const mode = document.getElementById("profile-mode").value;
-  const heightUnit = document.querySelector('input[name="height-unit"]:checked').value;
+  const heightUnitRadio2 = document.querySelector('input[name="height-unit"]:checked');
+  const heightUnit = heightUnitRadio2 ? heightUnitRadio2.value : "cm";
   const strideM = parseFloat(document.getElementById("profile-stride").value);
 
   let heightCm;
