@@ -336,13 +336,24 @@ function wireToday(){
         steps: val,
         updatedAt: Date.now()
       });
+      // The save itself succeeded at this point — anything that goes wrong
+      // below is just a display refresh, not a failed save, so it gets its
+      // own quieter error handling instead of overwriting the success toast.
       toast(date === todayStr() ? "Saved!" : `Saved for ${date}`);
+    }catch(e){
+      console.error(e);
+      toast("Couldn't save — check your connection");
+      return;
+    }
+
+    try{
       await refreshToday();
       await refreshHistory();
       await refreshBoard();
     }catch(e){
-      console.error(e);
-      toast("Couldn't save — check your connection");
+      // Save already succeeded above — a refresh hiccup here just means the
+      // screen might be a step behind until the next reload, not a failure.
+      console.error("Post-save refresh failed (save itself was fine):", e);
     }
   });
 
@@ -749,10 +760,15 @@ function wireWellness(){
         date: date, weightKg, updatedAt: Date.now()
       });
       toast(date === todayStr() ? "Weight saved" : `Weight saved for ${date}`);
-      await refreshWeight();
     }catch(e){
       console.error(e);
       toast("Couldn't save — check your connection");
+      return;
+    }
+    try{
+      await refreshWeight();
+    }catch(e){
+      console.error("Post-save refresh failed (save itself was fine):", e);
     }
   });
 
@@ -767,11 +783,16 @@ function wireWellness(){
           updatedAt: Date.now()
         }, { merge: true });
         toast(date === todayStr() ? `+${add}ml` : `+${add}ml on ${date}`);
-        await refreshWater();
-        await loadWaterInputForDate(date);
       }catch(e){
         console.error(e);
         toast("Couldn't save — check your connection");
+        return;
+      }
+      try{
+        await refreshWater();
+        await loadWaterInputForDate(date);
+      }catch(e){
+        console.error("Post-save refresh failed (save itself was fine):", e);
       }
     });
   });
@@ -785,10 +806,15 @@ function wireWellness(){
         date: date, ml: val, updatedAt: Date.now()
       });
       toast(date === todayStr() ? "Water total set" : `Water total set for ${date}`);
-      await refreshWater();
     }catch(e){
       console.error(e);
       toast("Couldn't save — check your connection");
+      return;
+    }
+    try{
+      await refreshWater();
+    }catch(e){
+      console.error("Post-save refresh failed (save itself was fine):", e);
     }
   });
 }
