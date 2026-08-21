@@ -29,6 +29,18 @@ function daysBetweenInclusive(startStr, endStr){
 function stepsEntryId(date){
   return `${uid}_${date}`;
 }
+function getSavedTeamSelection(){
+  try{
+    const raw = localStorage.getItem("ss_steps_team_ids");
+    const arr = raw ? JSON.parse(raw) : null;
+    return Array.isArray(arr) && arr.length > 0 ? arr : [profile.teamId];
+  }catch(e){
+    return [profile.teamId];
+  }
+}
+function setSavedTeamSelection(arr){
+  localStorage.setItem("ss_steps_team_ids", JSON.stringify(arr));
+}
 function shortDate(dateStr){
   const parts = dateStr.split("-");
   return `${parts[2]}/${parts[1]}`;
@@ -111,6 +123,11 @@ let challenge = null; // config/challenge doc: { active, startDate, endDate }
 let viewingTeamId = null; // which team's leaderboard is currently shown (admin can change this)
 let lastHistoryDocs = []; // cached for switching between list/graph without refetching
 let stepsChart = null;
+let lastBoardRows = []; // cached leaderboard rows, so paging doesn't need a refetch
+let lastBoardSortMode = "total";
+let lastBoardUnit = "km";
+let boardPage = 0;
+const BOARD_PAGE_SIZE = 8;
 
 /* ---------- Auth gate UI wiring ---------- */
 const gateEl = document.getElementById("gate");
@@ -308,9 +325,15 @@ function wireToday(){
     box.innerHTML = Object.values(TEAMS).map(t =>
       `<label class="checkbox-row"><input type="checkbox" class="steps-team-checkbox" value="${t.id}"><span>${t.name}</span></label>`
     ).join("");
-    // default: your own home team ticked, for a brand-new (unsaved) entry
-    const homeBox = box.querySelector(`input[value="${profile.teamId}"]`);
-    if(homeBox) homeBox.checked = true;
+    // default: whichever teams you last had ticked, remembered on this device
+    const remembered = getSavedTeamSelection();
+    box.querySelectorAll(".steps-team-checkbox").forEach(cb => {
+      cb.checked = remembered.includes(cb.value);
+    });
+    box.addEventListener("change", () => {
+      const checked = Array.from(box.querySelectorAll(".steps-team-checkbox:checked")).map(cb => cb.value);
+      if(checked.length > 0) setSavedTeamSelection(checked);
+    });
   }
 
   dateInput.addEventListener("change", () => loadStepsForDate(dateInput.value));
@@ -370,11 +393,11 @@ async function loadStepsForDate(date){
     document.getElementById("steps-input").value = snap.exists ? snap.data().steps : "";
 
     // If this admin has a "Log to team" checklist, reflect which teams
-    // this specific saved entry already belongs to (falls back to just
-    // their home team for a date with no entry yet).
+    // this specific saved entry already belongs to (falls back to your
+    // remembered selection for a date with no entry yet).
     const box = document.getElementById("steps-team-checkboxes");
     if(box){
-      const savedTeamIds = (snap.exists && snap.data().teamIds) || [profile.teamId];
+      const savedTeamIds = (snap.exists && snap.data().teamIds) || getSavedTeamSelection();
       box.querySelectorAll(".steps-team-checkbox").forEach(cb => {
         cb.checked = savedTeamIds.includes(cb.value);
       });
@@ -623,40 +646,85 @@ async function refreshBoard(){
 
     rows.sort((a, b) => sortMode === "average" ? b.avg - a.avg : b.steps - a.steps);
 
-    if(rows.length === 0){
-      boardEl.innerHTML = `<div class="empty">No one has logged steps yet — be the first!</div>`;
-      return;
-    }
-
-    const max = Math.max(...rows.map(r => sortMode === "average" ? r.avg : r.steps), 1);
-    const medals = ["🥇", "🥈", "🥉"];
-
-    boardEl.innerHTML = rows.map((r, i) => {
-      const metric = sortMode === "average" ? r.avg : r.steps;
-      const pct = Math.min(100, (metric / max) * 100);
-      const isMe = r.id === uid;
-      const dist = kmToDistanceUnit(r.km, unit);
-      const statLine = sortMode === "average"
-        ? `${Math.round(r.avg).toLocaleString()}/day avg · ${r.steps.toLocaleString()} total`
-        : `${r.steps.toLocaleString()} · ${dist.toFixed(1)}${distanceUnitLabel(unit)}`;
-      return `<div class="lane" style="${isMe ? "outline:1px solid rgba(232,185,63,0.5);" : ""}">
-        <div class="lane-top">
-          <div class="lane-name">
-            <span class="bib">${i+1}</span>
-            <span>${r.name}${isMe ? " (you)" : ""}</span>
-            ${medals[i] ? `<span class="medal">${medals[i]}</span>` : ""}
-          </div>
-          <span class="mono" style="color:var(--gray);">${statLine}</span>
-        </div>
-        <div class="lane-track">
-          <div class="lane-fill" style="width:${pct}%"></div>
-          <div class="lane-runner" style="left:${pct}%">🏃</div>
-        </div>
-      </div>`;
-    }).join("");
+    lastBoardRows = rows;
+    lastBoardSortMode = sortMode;
+    lastBoardUnit = unit;
+    boardPage = 0;
+    renderBoardPage();
   }catch(e){
     console.error(e);
     boardEl.innerHTML = `<div class="empty">Couldn't load the leaderboard. If this is the first run, check the browser console — Firestore sometimes needs a one-click index link the first time.</div>`;
+  }
+}
+
+function renderBoardPage(){
+  const boardEl = document.getElementById("board-list");
+  const rows = lastBoardRows;
+  const sortMode = lastBoardSortMode;
+  const unit = lastBoardUnit;
+
+  if(rows.length === 0){
+    boardEl.innerHTML = `<div class="empty">No one has logged steps yet — be the first!</div>`;
+    return;
+  }
+
+  const max = Math.max(...rows.map(r => sortMode === "average" ? r.avg : r.steps), 1);
+  const medals = ["🥇", "🥈", "🥉"];
+
+  const totalPages = Math.ceil(rows.length / BOARD_PAGE_SIZE);
+  boardPage = Math.max(0, Math.min(boardPage, totalPages - 1));
+  const pageRows = rows.slice(boardPage * BOARD_PAGE_SIZE, (boardPage + 1) * BOARD_PAGE_SIZE);
+
+  const rowsHtml = pageRows.map((r, i) => {
+    const rank = boardPage * BOARD_PAGE_SIZE + i;
+    const metric = sortMode === "average" ? r.avg : r.steps;
+    const pct = Math.min(100, (metric / max) * 100);
+    const isMe = r.id === uid;
+    const dist = kmToDistanceUnit(r.km, unit);
+    const statLine = sortMode === "average"
+      ? `${Math.round(r.avg).toLocaleString()}/day avg · ${r.steps.toLocaleString()} total`
+      : `${r.steps.toLocaleString()} · ${dist.toFixed(1)}${distanceUnitLabel(unit)}`;
+    // Only ever award a medal to someone who actually has data for this
+    // period — an empty row shouldn't inherit gold/silver/bronze just
+    // because everyone above them also had nothing logged.
+    const hasData = metric > 0;
+    const medalHtml = (rank < 3 && hasData) ? `<span class="medal">${medals[rank]}</span>` : "";
+    return `<div class="lane" style="${isMe ? "outline:1px solid rgba(232,185,63,0.5);" : ""}">
+      <div class="lane-top">
+        <div class="lane-name">
+          <span class="bib">${rank+1}</span>
+          <span>${r.name}${isMe ? " (you)" : ""}</span>
+          ${medalHtml}
+        </div>
+        <span class="mono" style="color:var(--gray);">${statLine}</span>
+      </div>
+      <div class="lane-track">
+        <div class="lane-fill" style="width:${pct}%"></div>
+        <div class="lane-runner" style="left:${pct}%">🏃</div>
+      </div>
+    </div>`;
+  }).join("");
+
+  let pagerHtml = "";
+  if(totalPages > 1){
+    pagerHtml = `<div class="board-pager">
+      <button class="pager-btn" id="board-prev" ${boardPage === 0 ? "disabled" : ""}>‹ Prev</button>
+      <span class="pager-label">Page ${boardPage + 1} of ${totalPages}</span>
+      <button class="pager-btn" id="board-next" ${boardPage === totalPages - 1 ? "disabled" : ""}>Next ›</button>
+    </div>`;
+  }
+
+  boardEl.innerHTML = rowsHtml + pagerHtml;
+
+  if(totalPages > 1){
+    document.getElementById("board-prev").addEventListener("click", () => {
+      boardPage = Math.max(0, boardPage - 1);
+      renderBoardPage();
+    });
+    document.getElementById("board-next").addEventListener("click", () => {
+      boardPage = Math.min(totalPages - 1, boardPage + 1);
+      renderBoardPage();
+    });
   }
 }
 
