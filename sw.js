@@ -1,4 +1,4 @@
-const CACHE_NAME = "step-track-v16";
+const CACHE_NAME = "step-track-v20";
 const SHELL_FILES = [
   "./index.html",
   "./style.css",
@@ -7,7 +7,8 @@ const SHELL_FILES = [
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
-  "./walker.png"
+  "./walker.png",
+  "./shoeprints.png"
 ];
 
 self.addEventListener("install", (event) => {
