@@ -26,6 +26,9 @@ function daysBetweenInclusive(startStr, endStr){
   const diff = Math.round((end - start) / 86400000) + 1;
   return Math.max(1, diff);
 }
+function stepsEntryId(date){
+  return `${uid}_${date}`;
+}
 function shortDate(dateStr){
   const parts = dateStr.split("-");
   return `${parts[2]}/${parts[1]}`;
@@ -106,6 +109,8 @@ let weightChart = null;
 let waterChart = null;
 let challenge = null; // config/challenge doc: { active, startDate, endDate }
 let viewingTeamId = null; // which team's leaderboard is currently shown (admin can change this)
+let lastHistoryDocs = []; // cached for switching between list/graph without refetching
+let stepsChart = null;
 
 /* ---------- Auth gate UI wiring ---------- */
 const gateEl = document.getElementById("gate");
@@ -190,13 +195,13 @@ async function boot(){
   document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${profile.teamName || ""}`;
 
   wireTabs();
+  viewingTeamId = profile.teamId;
   wireToday();
   wireProfile();
   wireWellness();
   wireChallengeAdmin();
   wireBoardTeamSwitcher();
 
-  viewingTeamId = profile.teamId;
   await refreshToday();
   await refreshHistory();
   await loadChallenge();
@@ -249,6 +254,14 @@ async function loadProfile(){
     );
   }
 
+  // Flag the admin's own profile doc so the security rules can let other
+  // teams' members read their name when the admin cross-posts entries into
+  // a team that isn't their own home team.
+  if((auth.currentUser.email || "").toLowerCase() === ADMIN_EMAIL.toLowerCase() && !profile.isAdmin){
+    profile.isAdmin = true;
+    await db.collection("users").doc(uid).set({ isAdmin: true }, { merge: true });
+  }
+
   document.getElementById("profile-name").value = profile.name;
   document.getElementById("profile-mode").value = profile.mode || "default";
   document.querySelector(`input[name="height-unit"][value="${profile.heightUnit}"]`).checked = true;
@@ -286,6 +299,20 @@ function wireToday(){
   dateInput.max = todayStr();
   dateInput.value = todayStr();
 
+  const userEmail = (auth.currentUser.email || "").toLowerCase();
+  const isAdmin = userEmail === ADMIN_EMAIL.toLowerCase();
+  if(isAdmin){
+    const card = document.getElementById("steps-admin-team-card");
+    const box = document.getElementById("steps-team-checkboxes");
+    card.style.display = "block";
+    box.innerHTML = Object.values(TEAMS).map(t =>
+      `<label class="checkbox-row"><input type="checkbox" class="steps-team-checkbox" value="${t.id}"><span>${t.name}</span></label>`
+    ).join("");
+    // default: your own home team ticked, for a brand-new (unsaved) entry
+    const homeBox = box.querySelector(`input[value="${profile.teamId}"]`);
+    if(homeBox) homeBox.checked = true;
+  }
+
   dateInput.addEventListener("change", () => loadStepsForDate(dateInput.value));
 
   document.getElementById("save-steps").addEventListener("click", async () => {
@@ -293,12 +320,18 @@ function wireToday(){
     if(isNaN(val) || val < 0){ toast("Enter a valid step count"); return; }
     const date = dateInput.value || todayStr();
 
-    const id = `${uid}_${date}`;
+    const teamIds = isAdmin
+      ? Array.from(document.querySelectorAll(".steps-team-checkbox:checked")).map(cb => cb.value)
+      : [profile.teamId];
+
+    if(teamIds.length === 0){ toast("Tick at least one team"); return; }
+
+    const id = stepsEntryId(date);
     try{
       await db.collection("entries").doc(id).set({
         member: uid,
         name: profile.name,
-        teamId: profile.teamId,
+        teamIds: teamIds,
         date: date,
         steps: val,
         updatedAt: Date.now()
@@ -312,21 +345,36 @@ function wireToday(){
       toast("Couldn't save — check your connection");
     }
   });
+
+  document.querySelectorAll('input[name="history-view"]').forEach(radio => {
+    radio.addEventListener("change", () => renderHistoryView(radio.value));
+  });
 }
 
 async function loadStepsForDate(date){
   const label = document.getElementById("steps-input-label");
   label.textContent = date === todayStr() ? "Steps" : `Steps (editing ${date})`;
   try{
-    const snap = await db.collection("entries").doc(`${uid}_${date}`).get();
+    const snap = await db.collection("entries").doc(stepsEntryId(date)).get();
     document.getElementById("steps-input").value = snap.exists ? snap.data().steps : "";
+
+    // If this admin has a "Log to team" checklist, reflect which teams
+    // this specific saved entry already belongs to (falls back to just
+    // their home team for a date with no entry yet).
+    const box = document.getElementById("steps-team-checkboxes");
+    if(box){
+      const savedTeamIds = (snap.exists && snap.data().teamIds) || [profile.teamId];
+      box.querySelectorAll(".steps-team-checkbox").forEach(cb => {
+        cb.checked = savedTeamIds.includes(cb.value);
+      });
+    }
   }catch(e){
     console.error(e);
   }
 }
 
 async function refreshToday(){
-  const snap = await db.collection("entries").doc(`${uid}_${todayStr()}`).get();
+  const snap = await db.collection("entries").doc(stepsEntryId(todayStr())).get();
   const steps = snap.exists ? snap.data().steps : 0;
   document.getElementById("today-steps").textContent = steps.toLocaleString();
   document.getElementById("today-distance").textContent = fmtDistance(steps, computeStride(profile));
@@ -345,21 +393,51 @@ async function refreshHistory(){
       .limit(14)
       .get();
 
-    if(snap.empty){
+    lastHistoryDocs = snap.docs.map(d => d.data());
+
+    if(lastHistoryDocs.length === 0){
       listEl.innerHTML = `<div class="empty">No entries yet — log today's steps above.</div>`;
+      if(stepsChart){ stepsChart.destroy(); stepsChart = null; }
       return;
     }
-    const stride = computeStride(profile);
-    listEl.innerHTML = snap.docs.map(d => {
-      const e = d.data();
-      return `<div class="history-item">
-        <span class="date">${e.date}</span>
-        <span class="mono">${e.steps.toLocaleString()} steps · ${fmtDistance(e.steps, stride)}</span>
-      </div>`;
-    }).join("");
+    const activeView = document.querySelector('input[name="history-view"]:checked').value;
+    renderHistoryView(activeView);
   }catch(e){
     console.error(e);
     listEl.innerHTML = `<div class="empty">Couldn't load history yet. If this is the first run, Firestore may need a moment to build an index — check the browser console for a one-click link.</div>`;
+  }
+}
+
+function renderHistoryView(mode){
+  const listEl = document.getElementById("history-list");
+  const chartWrap = document.getElementById("history-chart-wrap");
+
+  if(lastHistoryDocs.length === 0){
+    listEl.style.display = "block";
+    chartWrap.style.display = "none";
+    return;
+  }
+
+  const stride = computeStride(profile);
+
+  if(mode === "graph"){
+    listEl.style.display = "none";
+    chartWrap.style.display = "block";
+    const asc = lastHistoryDocs.slice().reverse();
+    stepsChart = buildLineChart(
+      "steps-chart", stepsChart,
+      asc.map(e => shortDate(e.date)),
+      asc.map(e => e.steps),
+      "Steps",
+      "#C24914"
+    );
+  }else{
+    listEl.style.display = "block";
+    chartWrap.style.display = "none";
+    listEl.innerHTML = lastHistoryDocs.map(e => `<div class="history-item">
+      <span class="date">${e.date}</span>
+      <span class="mono">${e.steps.toLocaleString()} steps · ${fmtDistance(e.steps, stride)}</span>
+    </div>`).join("");
   }
 }
 
@@ -415,6 +493,31 @@ function renderChallengeBanner(){
   banner.style.display = "block";
 }
 
+async function fetchTeamEntries(teamId, range){
+  // Support both the old schema (single `teamId` string, from entries saved
+  // before this update) and the new schema (`teamIds` array) so existing
+  // history keeps showing up on the leaderboard with no manual migration.
+  let newQuery = db.collection("entries").where("teamIds", "array-contains", teamId);
+  let oldQuery = db.collection("entries").where("teamId", "==", teamId);
+  let windowStart = null;
+
+  if(range === "challenge"){
+    newQuery = newQuery.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
+    oldQuery = oldQuery.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
+    windowStart = challenge.startDate;
+  }else if(range === "today"){
+    newQuery = newQuery.where("date", "==", todayStr());
+    oldQuery = oldQuery.where("date", "==", todayStr());
+  }else if(range !== "alltime"){
+    windowStart = daysAgoStr(parseInt(range, 10));
+    newQuery = newQuery.where("date", ">=", windowStart);
+    oldQuery = oldQuery.where("date", ">=", windowStart);
+  }
+
+  const [newSnap, oldSnap] = await Promise.all([newQuery.get(), oldQuery.get()]);
+  return { docs: [...newSnap.docs, ...oldSnap.docs], windowStart };
+}
+
 async function refreshBoard(){
   const boardEl = document.getElementById("board-list");
   const noteEl = document.getElementById("board-coverage-note");
@@ -430,33 +533,33 @@ async function refreshBoard(){
   }
 
   try{
-    let query = db.collection("entries").where("teamId", "==", viewingTeamId);
-    let windowStart = null; // the date this range is "supposed" to start from, for coverage checking
-    if(range === "challenge"){
-      query = query.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
-      windowStart = challenge.startDate;
-    }else if(range === "today"){
-      query = query.where("date", "==", todayStr());
-    }else if(range !== "alltime"){
-      windowStart = daysAgoStr(parseInt(range, 10));
-      query = query.where("date", ">=", windowStart);
-    }
-    // "alltime" is intentionally left unbounded — we need every member's
-    // full history to work out the common start date below.
-    const entriesSnap = await query.get();
+    const { docs: entryDocs, windowStart } = await fetchTeamEntries(viewingTeamId, range);
     const usersSnap = await db.collection("users").where("teamId", "==", viewingTeamId).get();
 
     const users = {};
     usersSnap.forEach(d => users[d.id] = d.data());
 
+    // An entry can belong to someone whose *home* team differs from the
+    // team being viewed (the admin cross-posting into another team). Fetch
+    // any such profiles individually so their name/stride still show up
+    // correctly instead of falling back to "Friend".
+    const missingIds = new Set();
+    entryDocs.forEach(d => { if(!(d.data().member in users)) missingIds.add(d.data().member); });
+    for(const id of missingIds){
+      try{
+        const snap = await db.collection("users").doc(id).get();
+        if(snap.exists) users[id] = snap.data();
+      }catch(e){ console.error(e); }
+    }
+
     // Each member's earliest entry date within whatever we just fetched.
     const memberEarliest = {};
-    entriesSnap.forEach(d => {
+    entryDocs.forEach(d => {
       const e = d.data();
       if(!(e.member in memberEarliest) || e.date < memberEarliest[e.member]) memberEarliest[e.member] = e.date;
     });
 
-    let usableDocs = entriesSnap.docs;
+    let usableDocs = entryDocs;
     let days;
 
     if(range === "today"){
@@ -465,7 +568,7 @@ async function refreshBoard(){
       const idsWithData = Object.keys(memberEarliest);
       if(idsWithData.length > 0){
         const commonStart = idsWithData.reduce((max, id) => memberEarliest[id] > max ? memberEarliest[id] : max, idsWithData[0] && memberEarliest[idsWithData[0]]);
-        usableDocs = entriesSnap.docs.filter(d => d.data().date >= commonStart);
+        usableDocs = entryDocs.filter(d => d.data().date >= commonStart);
         days = daysBetweenInclusive(commonStart, todayStr());
         noteEl.textContent = `All-time totals start from ${commonStart} — the earliest date every current participant has data from.`;
         noteEl.style.display = "block";

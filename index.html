@@ -77,6 +77,12 @@
 
     <!-- TODAY -->
     <section id="view-today" class="view active">
+      <div class="card" id="steps-admin-team-card" style="display:none;">
+        <span class="eyebrow">Include this entry in teams (admin)</span>
+        <div id="steps-team-checkboxes"></div>
+        <p style="font-size:12px; color:var(--gray); margin:8px 0 0;">You enter your data once — tick every team it should count toward.</p>
+      </div>
+
       <div class="card">
         <span class="eyebrow">Today's steps</span>
         <div class="row between">
@@ -97,8 +103,15 @@
       </div>
 
       <div class="card">
-        <span class="eyebrow">Your recent history</span>
+        <div class="row between" style="margin-bottom:10px;">
+          <span class="eyebrow" style="margin:0;">Your recent history</span>
+        </div>
+        <div class="unit-toggle" id="history-view-toggle" style="margin-bottom:14px;">
+          <label><input type="radio" name="history-view" value="list" checked><span>List</span></label>
+          <label><input type="radio" name="history-view" value="graph"><span>Graph</span></label>
+        </div>
         <div id="history-list"><div class="empty">No entries yet — log today's steps above.</div></div>
+        <div class="chart-wrap" id="history-chart-wrap" style="display:none;"><canvas id="steps-chart" height="160"></canvas></div>
       </div>
     </section>
 
@@ -295,7 +308,7 @@
   </main>
 
   <nav class="tabs">
-    <button class="tab-btn active" data-view="today"><span class="icon">📆</span>Today</button>
+    <button class="tab-btn active" data-view="today"><span class="icon">👣</span>Steps</button>
     <button class="tab-btn" data-view="board"><span class="icon">🏆</span>Board</button>
     <button class="tab-btn" data-view="wellness"><span class="icon">🔒</span>Wellness</button>
     <button class="tab-btn" data-view="profile"><span class="icon">⚙️</span>Profile</button>
