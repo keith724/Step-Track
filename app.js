@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0002"; // bumped by one with every file update shipped
+const APP_VERSION = "0003"; // bumped by one with every file update shipped
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function todayStr(){
@@ -423,13 +423,33 @@ async function refreshToday(){
 async function refreshHistory(){
   const listEl = document.getElementById("history-list");
   try{
-    const snap = await db.collection("entries")
-      .where("member", "==", uid)
-      .orderBy("date", "desc")
-      .limit(14)
-      .get();
+    // Query shape now mirrors the leaderboard's fetchTeamEntries(): filter
+    // explicitly on teamIds (new format) / teamId (old format) rather than
+    // just member — a bare member-only query wasn't reliably satisfying the
+    // security rule's own teamIds check for list operations.
+    const [newSnap, oldSnap] = await Promise.all([
+      db.collection("entries")
+        .where("member", "==", uid)
+        .where("teamIds", "array-contains", profile.teamId)
+        .orderBy("date", "desc")
+        .limit(14)
+        .get(),
+      db.collection("entries")
+        .where("member", "==", uid)
+        .where("teamId", "==", profile.teamId)
+        .orderBy("date", "desc")
+        .limit(14)
+        .get()
+    ]);
 
-    lastHistoryDocs = snap.docs.map(d => d.data());
+    const seen = new Set();
+    const merged = [...newSnap.docs, ...oldSnap.docs].filter(d => {
+      if(seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    });
+    merged.sort((a, b) => b.data().date.localeCompare(a.data().date));
+    lastHistoryDocs = merged.slice(0, 14).map(d => d.data());
 
     if(lastHistoryDocs.length === 0){
       listEl.innerHTML = `<div class="empty">No entries yet — log today's steps above.</div>`;
