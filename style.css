@@ -158,7 +158,7 @@ button.ghost{ background: transparent; color: var(--chalk); border: 1px solid rg
   transition: width 0.5s ease;
 }
 .lane-runner{
-  position:absolute; top:50%; transform: translate(-50%,-50%);
+  position:absolute; top:50%; transform: translate(-50%,-50%) scaleX(-1);
   font-size: 16px;
 }
 
