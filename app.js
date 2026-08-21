@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0004"; // bumped by one with every file update shipped
+const APP_VERSION = "0005"; // bumped by one with every file update shipped
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function todayStr(){
@@ -139,6 +139,17 @@ document.getElementById("show-signup").addEventListener("click", (e) => {
   document.getElementById("form-login").style.display = "none";
   document.getElementById("form-signup").style.display = "block";
   document.getElementById("gate-error").textContent = "";
+});
+
+document.querySelectorAll(".password-toggle").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const input = document.getElementById(btn.dataset.target);
+    if(!input) return;
+    const showing = input.type === "text";
+    input.type = showing ? "password" : "text";
+    btn.textContent = showing ? "👁" : "🙈";
+    btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+  });
 });
 document.getElementById("show-login").addEventListener("click", (e) => {
   e.preventDefault();
@@ -867,12 +878,13 @@ async function loadAllMembers(){
     const teamOptions = Object.values(TEAMS).map(t => `<option value="${t.id}">${t.name}</option>`).join("");
 
     listEl.innerHTML = members.map(m => `
-      <div class="row between" style="padding:10px 0; border-bottom:1px solid rgba(245,241,232,0.06);">
-        <span style="font-size:14px;">${m.name || "Unnamed"}${m.id === uid ? " (you)" : ""}</span>
+      <div class="row between" style="padding:10px 0; border-bottom:1px solid rgba(245,241,232,0.06); gap:8px;">
+        <span style="font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.name || "Unnamed"}${m.id === uid ? " (you)" : ""}</span>
         <select class="member-team-select" data-uid="${m.id}" data-original-team="${m.teamId || ""}" style="width:auto; font-size:13px; padding:6px 10px;">
           <option value="">No team</option>
           ${teamOptions}
         </select>
+        ${m.id === uid ? "" : `<button class="member-delete-btn" data-uid="${m.id}" data-name="${(m.name || "Unnamed").replace(/"/g, "&quot;")}" title="Delete member's data" style="background:none; border:none; color:#e0785a; font-size:16px; padding:4px 6px; cursor:pointer; flex-shrink:0;">🗑</button>`}
       </div>
     `).join("");
 
@@ -902,9 +914,42 @@ async function loadAllMembers(){
         }
       });
     });
+
+    listEl.querySelectorAll(".member-delete-btn").forEach(btn => {
+      btn.addEventListener("click", () => deleteMember(btn.dataset.uid, btn.dataset.name));
+    });
   }catch(e){
     console.error(e);
     listEl.innerHTML = `<div class="empty">Couldn't load members — check your connection.</div>`;
+  }
+}
+
+async function deleteMember(memberUid, memberName){
+  const confirmed = window.confirm(
+    `Delete ${memberName}'s data? This removes their profile and every step entry they've logged, ` +
+    `on every team. Their weight/water logs stay private and untouched. ` +
+    `This does NOT delete their login — do that separately in Firebase console → Authentication if needed.\n\n` +
+    `This can't be undone. Continue?`
+  );
+  if(!confirmed) return;
+
+  try{
+    // "member" is present on every entry regardless of whether it uses the
+    // old single-team format or the new teamIds array, so one query catches
+    // everything this person has ever logged, on every team.
+    const snap = await db.collection("entries").where("member", "==", memberUid).get();
+
+    for(const d of snap.docs){
+      await db.collection("entries").doc(d.id).delete();
+    }
+    await db.collection("users").doc(memberUid).delete();
+
+    toast(`Deleted ${memberName}'s data`);
+    await loadAllMembers();
+    await refreshBoard();
+  }catch(e){
+    console.error(e);
+    toast("Couldn't delete — check your connection");
   }
 }
 
