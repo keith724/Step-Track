@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0003"; // bumped by one with every file update shipped
+const APP_VERSION = "0004"; // bumped by one with every file update shipped
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function todayStr(){
@@ -219,6 +219,7 @@ async function boot(){
   wireProfile();
   wireWellness();
   wireChallengeAdmin();
+  wireMemberAdmin();
   wireBoardTeamSwitcher();
 
   await refreshToday();
@@ -262,9 +263,11 @@ async function loadProfile(){
   if(!profile.weightUnit) profile.weightUnit = "kg";
   if(!profile.heightUnit) profile.heightUnit = "cm";
 
-  // Backfill: anyone who signed up before teams existed gets defaulted to
-  // the first team, so their existing entries and login keep working.
-  if(!profile.teamId){
+  // Backfill: anyone who signed up before teams existed (field genuinely
+  // absent) gets defaulted to the first team. If an admin has deliberately
+  // set someone to "no team" (teamId explicitly ""), that's left alone —
+  // it's a real choice, not a legacy gap.
+  if(profile.teamId === undefined){
     const firstKey = Object.keys(TEAMS)[0];
     profile.teamId = TEAMS[firstKey].id;
     profile.teamName = TEAMS[firstKey].name;
@@ -347,9 +350,12 @@ function wireToday(){
 
     const teamIds = isAdmin
       ? Array.from(document.querySelectorAll(".steps-team-checkbox:checked")).map(cb => cb.value)
-      : [profile.teamId];
+      : (profile.teamId ? [profile.teamId] : []);
 
-    if(teamIds.length === 0){ toast("Tick at least one team"); return; }
+    if(teamIds.length === 0){
+      toast(isAdmin ? "Tick at least one team" : "You're not on a team yet — ask your admin to assign you one");
+      return;
+    }
 
     const id = stepsEntryId(date);
     try{
@@ -519,6 +525,11 @@ function wireBoardTeamSwitcher(){
 }
 
 async function loadChallenge(){
+  if(!viewingTeamId){
+    challenge = null;
+    renderChallengeBanner();
+    return;
+  }
   try{
     const snap = await db.collection("challenges").doc(viewingTeamId).get();
     challenge = snap.exists ? snap.data() : null;
@@ -579,6 +590,11 @@ async function refreshBoard(){
   const noteEl = document.getElementById("board-coverage-note");
   boardEl.innerHTML = `<div class="empty">Loading leaderboard...</div>`;
   noteEl.style.display = "none";
+
+  if(!viewingTeamId){
+    boardEl.innerHTML = `<div class="empty">You're not assigned to a team yet — ask your admin to assign you one.</div>`;
+    return;
+  }
 
   // Read every bit of page state defensively — if someone's browser has a
   // slightly stale copy of the page (e.g. mid-update, before a reload),
@@ -822,6 +838,73 @@ async function loadChallengeIntoAdminForm(teamId){
   }catch(e){
     console.error(e);
     statusEl.textContent = "Couldn't load this team's challenge.";
+  }
+}
+
+/* ---------- Member management (only keith@9cr.uk can see/edit this) ---------- */
+function wireMemberAdmin(){
+  const userEmail = (auth.currentUser.email || "").toLowerCase();
+  if(userEmail !== ADMIN_EMAIL.toLowerCase()) return;
+
+  document.getElementById("admin-members-card").style.display = "block";
+  loadAllMembers();
+}
+
+async function loadAllMembers(){
+  const listEl = document.getElementById("admin-members-list");
+  listEl.innerHTML = `<div class="empty">Loading members...</div>`;
+
+  try{
+    const snap = await db.collection("users").get();
+    const members = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    members.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    if(members.length === 0){
+      listEl.innerHTML = `<div class="empty">No members found.</div>`;
+      return;
+    }
+
+    const teamOptions = Object.values(TEAMS).map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+
+    listEl.innerHTML = members.map(m => `
+      <div class="row between" style="padding:10px 0; border-bottom:1px solid rgba(245,241,232,0.06);">
+        <span style="font-size:14px;">${m.name || "Unnamed"}${m.id === uid ? " (you)" : ""}</span>
+        <select class="member-team-select" data-uid="${m.id}" data-original-team="${m.teamId || ""}" style="width:auto; font-size:13px; padding:6px 10px;">
+          <option value="">No team</option>
+          ${teamOptions}
+        </select>
+      </div>
+    `).join("");
+
+    // Set each select's current value after inserting (safer than baking
+    // "selected" into the HTML string when values may contain quotes).
+    members.forEach(m => {
+      const sel = listEl.querySelector(`.member-team-select[data-uid="${m.id}"]`);
+      if(sel) sel.value = m.teamId || "";
+    });
+
+    listEl.querySelectorAll(".member-team-select").forEach(sel => {
+      sel.addEventListener("change", async () => {
+        const memberUid = sel.dataset.uid;
+        const newTeamId = sel.value; // "" means no team at all
+        const team = Object.values(TEAMS).find(t => t.id === newTeamId);
+        try{
+          await db.collection("users").doc(memberUid).set({
+            teamId: newTeamId,
+            teamName: team ? team.name : ""
+          }, { merge: true });
+          sel.dataset.originalTeam = newTeamId;
+          toast(newTeamId ? `Set to ${team.name}` : "Set to no team");
+        }catch(e){
+          console.error(e);
+          toast("Couldn't update — check your connection");
+          sel.value = sel.dataset.originalTeam || ""; // revert the dropdown on failure
+        }
+      });
+    });
+  }catch(e){
+    console.error(e);
+    listEl.innerHTML = `<div class="empty">Couldn't load members — check your connection.</div>`;
   }
 }
 
