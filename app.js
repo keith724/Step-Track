@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0009"; // bumped by one with every file update shipped
+const APP_VERSION = "0010"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -76,6 +76,9 @@ function daysBetweenInclusive(startStr, endStr){
   const end = new Date(endStr + "T00:00:00");
   const diff = Math.round((end - start) / 86400000) + 1;
   return Math.max(1, diff);
+}
+function dontDoesnt(count){
+  return count === 1 ? "doesn't" : "don't";
 }
 function stepsEntryId(date){
   return `${uid}_${date}`;
@@ -738,14 +741,14 @@ async function refreshBoard(){
       usableDocs = entryDocs.filter(d => d.data().date >= reportStart);
       days = daysBetweenInclusive(reportStart, todayStr());
       noteEl.textContent = `Reporting from ${reportStart} — the earliest date at least 4 current participants have data from.`
-        + (missingNames.length > 0 ? ` ${missingNames.join(", ")} don't have data going back that far.` : "");
+        + (missingNames.length > 0 ? ` Note: ${missingNames.join(", ")} ${dontDoesnt(missingNames.length)} have data going back that far.` : "");
       noteEl.style.display = "block";
     }else if(range === "7" || range === "30"){
       const { reportStart, missingNames } = computeReportWindow(memberEarliest, windowStart, users);
       usableDocs = entryDocs.filter(d => d.data().date >= reportStart);
       days = daysBetweenInclusive(reportStart, todayStr());
       noteEl.textContent = `Reporting from ${reportStart}.`
-        + (missingNames.length > 0 ? ` ${missingNames.join(", ")} don't have data going back that far.` : "");
+        + (missingNames.length > 0 ? ` Note: ${missingNames.join(", ")} ${dontDoesnt(missingNames.length)} have data going back that far.` : "");
       noteEl.style.display = "block";
     }else{
       // challenge: flag anyone whose data doesn't reach back to the start
@@ -757,7 +760,7 @@ async function refreshBoard(){
         .map(id => (users[id] && users[id].name) || "Someone");
 
       if(short.length > 0){
-        noteEl.textContent = `Note: ${short.join(", ")} don't have data going back the full challenge period — their totals reflect fewer days.`;
+        noteEl.textContent = `Note: ${short.join(", ")} ${dontDoesnt(short.length)} have data going back the full challenge period — their totals reflect fewer days.`;
         noteEl.style.display = "block";
       }
     }
@@ -978,21 +981,29 @@ function renderTeamsList(){
   }
 
   el.innerHTML = TEAMS_LIST.map(t => `
-    <div style="padding:12px 0; border-bottom:1px solid rgba(245,241,232,0.06);">
-      <div style="margin-bottom:8px;">
-        <label style="font-size:11px;">Team name</label>
-        <input type="text" class="team-name-input" data-id="${t.id}" value="${t.name.replace(/"/g, "&quot;")}">
-      </div>
-      <div class="row" style="gap:8px; align-items:flex-end;">
-        <div style="flex:1;">
-          <label style="font-size:11px;">Invite code</label>
-          <input type="text" class="team-code-input" data-id="${t.id}" value="${t.inviteCode.replace(/"/g, "&quot;")}">
+    <div class="list-item">
+      <button type="button" class="list-item-header" data-target="team-body-${t.id}">
+        <span>${t.name}</span>
+        <span class="chevron">›</span>
+      </button>
+      <div class="list-item-body" id="team-body-${t.id}">
+        <div style="margin-bottom:8px;">
+          <label style="font-size:11px;">Team name</label>
+          <input type="text" class="team-name-input" data-id="${t.id}" value="${t.name.replace(/"/g, "&quot;")}">
         </div>
-        <button class="ghost team-save-btn" data-id="${t.id}" style="width:auto; padding:12px 18px;">Save</button>
-        <button class="team-delete-btn" data-id="${t.id}" data-name="${t.name.replace(/"/g, "&quot;")}" title="Delete team" style="background:none; border:none; color:#e0785a; font-size:18px; padding:10px 6px; cursor:pointer; flex-shrink:0;">🗑</button>
+        <div class="row" style="gap:8px; align-items:flex-end;">
+          <div style="flex:1;">
+            <label style="font-size:11px;">Invite code</label>
+            <input type="text" class="team-code-input" data-id="${t.id}" value="${t.inviteCode.replace(/"/g, "&quot;")}">
+          </div>
+          <button class="ghost team-save-btn" data-id="${t.id}" style="width:auto; padding:12px 18px;">Save</button>
+          <button class="team-delete-btn" data-id="${t.id}" data-name="${t.name.replace(/"/g, "&quot;")}" title="Delete team" style="background:none; border:none; color:#e0785a; font-size:18px; padding:10px 6px; cursor:pointer; flex-shrink:0;">🗑</button>
+        </div>
       </div>
     </div>
   `).join("");
+
+  wireListItemToggles(el);
 
   el.querySelectorAll(".team-save-btn").forEach(btn => {
     btn.addEventListener("click", async () => {
@@ -1022,6 +1033,26 @@ function renderTeamsList(){
 
   el.querySelectorAll(".team-delete-btn").forEach(btn => {
     btn.addEventListener("click", () => deleteTeam(btn.dataset.id, btn.dataset.name));
+  });
+}
+
+// Shared accordion behaviour: clicking a .list-item-header toggles the
+// visibility of its paired .list-item-body (matched by id/data-target).
+function wireListItemToggles(container){
+  container.querySelectorAll(".list-item-header").forEach(header => {
+    header.addEventListener("click", () => {
+      const body = document.getElementById(header.dataset.target);
+      if(!body) return;
+      const isOpen = body.classList.contains("open");
+      // Close any other open item in this same list first, so only one is
+      // expanded at a time — keeps a long list manageable.
+      container.querySelectorAll(".list-item-body.open").forEach(b => b.classList.remove("open"));
+      container.querySelectorAll(".list-item-header.open").forEach(h => h.classList.remove("open"));
+      if(!isOpen){
+        body.classList.add("open");
+        header.classList.add("open");
+      }
+    });
   });
 }
 
@@ -1081,15 +1112,27 @@ async function loadAllMembers(){
     const teamOptions = TEAMS_LIST.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
 
     listEl.innerHTML = members.map(m => `
-      <div class="row between" style="padding:10px 0; border-bottom:1px solid rgba(245,241,232,0.06); gap:8px;">
-        <span style="font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.name || "Unnamed"}${m.id === uid ? " (you)" : ""}</span>
-        <select class="member-team-select" data-uid="${m.id}" data-original-team="${m.teamId || ""}" style="width:auto; font-size:13px; padding:6px 10px;">
-          <option value="">No team</option>
-          ${teamOptions}
-        </select>
-        ${m.id === uid ? "" : `<button class="member-delete-btn" data-uid="${m.id}" data-name="${(m.name || "Unnamed").replace(/"/g, "&quot;")}" title="Delete member's data" style="background:none; border:none; color:#e0785a; font-size:16px; padding:4px 6px; cursor:pointer; flex-shrink:0;">🗑</button>`}
+      <div class="list-item">
+        <button type="button" class="list-item-header" data-target="member-body-${m.id}">
+          <span>${m.name || "Unnamed"}${m.id === uid ? " (you)" : ""}</span>
+          <span class="row" style="gap:8px; width:auto;">
+            <span class="mono" style="color:var(--gray); font-size:12px;">${teamNameById(m.teamId)}</span>
+            <span class="chevron">›</span>
+          </span>
+        </button>
+        <div class="list-item-body" id="member-body-${m.id}">
+          <div class="row between" style="gap:8px;">
+            <select class="member-team-select" data-uid="${m.id}" data-original-team="${m.teamId || ""}" style="width:auto; font-size:13px; padding:6px 10px; flex:1;">
+              <option value="">No team</option>
+              ${teamOptions}
+            </select>
+            ${m.id === uid ? "" : `<button class="member-delete-btn" data-uid="${m.id}" data-name="${(m.name || "Unnamed").replace(/"/g, "&quot;")}" title="Delete member's data" style="background:none; border:none; color:#e0785a; font-size:16px; padding:4px 6px; cursor:pointer; flex-shrink:0;">🗑</button>`}
+          </div>
+        </div>
       </div>
     `).join("");
+
+    wireListItemToggles(listEl);
 
     // Set each select's current value after inserting (safer than baking
     // "selected" into the HTML string when values may contain quotes).
@@ -1110,6 +1153,7 @@ async function loadAllMembers(){
           }, { merge: true });
           sel.dataset.originalTeam = newTeamId;
           toast(newTeamId ? `Set to ${team.name}` : "Set to no team");
+          await loadAllMembers(); // refresh so the header's team label updates
         }catch(e){
           console.error(e);
           toast("Couldn't update — check your connection");

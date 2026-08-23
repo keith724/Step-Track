@@ -1,4 +1,4 @@
-const CACHE_NAME = "step-track-v32";
+const CACHE_NAME = "step-track-v33";
 const SHELL_FILES = [
   "./index.html",
   "./style.css",

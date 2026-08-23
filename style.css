@@ -263,6 +263,27 @@ nav.tabs button.active{ color: var(--gold); }
   width: 18px; height: 18px; accent-color: var(--gold); flex-shrink:0;
 }
 
+.list-item{ border-bottom: 1px solid rgba(245,241,232,0.06); }
+.list-item:last-child{ border-bottom: none; }
+.list-item-header{
+  width: 100%; background: none; border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 2px; font-size: 14px; color: var(--chalk);
+  font-family: 'Inter', sans-serif; text-align: left;
+}
+.list-item-header span:first-child{
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; margin-right: 8px;
+}
+.list-item-header .chevron{
+  color: var(--gray); font-size: 16px; transition: transform 0.15s ease; flex-shrink: 0;
+}
+.list-item-header.open .chevron{ transform: rotate(90deg); color: var(--gold); }
+.list-item-body{
+  display: none;
+  padding: 4px 2px 16px;
+}
+.list-item-body.open{ display: block; }
+
 .password-field{ position: relative; }
 .password-field input{ padding-right: 46px; }
 .password-toggle{
