@@ -28,7 +28,10 @@
       </div>
       <div style="margin-bottom:16px; text-align:left;">
         <label>Password</label>
-        <input type="password" id="login-password" placeholder="••••••••">
+        <div class="password-field">
+          <input type="password" id="login-password" placeholder="••••••••">
+          <button type="button" class="password-toggle" data-target="login-password" aria-label="Show password">👁</button>
+        </div>
       </div>
       <button class="primary" id="login-btn">Log in</button>
       <p style="font-size:12px; color:var(--gray); margin-top:14px;">
@@ -47,7 +50,10 @@
       </div>
       <div style="margin-bottom:12px; text-align:left;">
         <label>Password (6+ characters)</label>
-        <input type="password" id="signup-password" placeholder="••••••••">
+        <div class="password-field">
+          <input type="password" id="signup-password" placeholder="••••••••">
+          <button type="button" class="password-toggle" data-target="signup-password" aria-label="Show password">👁</button>
+        </div>
       </div>
       <div style="margin-bottom:16px; text-align:left;">
         <label>Group invite code</label>
@@ -278,12 +284,6 @@
         </p>
       </div>
 
-      <div class="card" id="admin-members-card" style="display:none; border-color: rgba(232,185,63,0.4);">
-        <span class="eyebrow">👥 Member management (admin)</span>
-        <p style="font-size:12px; color:var(--gray); margin:0 0 14px;">Assign or reassign which team each member belongs to, or set them to no team at all.</p>
-        <div id="admin-members-list"><div class="empty">Loading members...</div></div>
-      </div>
-
       <div class="card" id="admin-challenge-card" style="display:none; border-color: rgba(232,185,63,0.4);">
         <span class="eyebrow">🏁 Challenge admin</span>
         <p style="font-size:12px; color:var(--gray); margin:0 0 14px;">Only your account can see or change this.</p>
@@ -312,6 +312,34 @@
       <p id="app-version" style="text-align:center; font-size:11px; color:var(--gray); margin:0 0 24px;"></p>
     </section>
 
+    <!-- TEAMS (admin only) -->
+    <section id="view-teams" class="view">
+      <div class="card">
+        <span class="eyebrow">Add a new team</span>
+        <div style="margin-bottom:12px;">
+          <label>Team name</label>
+          <input type="text" id="new-team-name" placeholder="e.g. Riverside Runners">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label>Invite code</label>
+          <input type="text" id="new-team-code" placeholder="e.g. riverside26">
+        </div>
+        <button class="primary" id="add-team-btn">Add team</button>
+        <div class="sub-number" id="add-team-status" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <span class="eyebrow">Existing teams</span>
+        <div id="teams-list"><div class="empty">Loading teams...</div></div>
+      </div>
+
+      <div class="card">
+        <span class="eyebrow">👥 Member management</span>
+        <p style="font-size:12px; color:var(--gray); margin:0 0 14px;">Assign or reassign which team each member belongs to, or set them to no team at all.</p>
+        <div id="admin-members-list"><div class="empty">Loading members...</div></div>
+      </div>
+    </section>
+
   </main>
 
   <nav class="tabs">
@@ -319,6 +347,7 @@
     <button class="tab-btn" data-view="board"><span class="icon">🏆</span>Board</button>
     <button class="tab-btn" data-view="wellness"><span class="icon">🔒</span>Wellness</button>
     <button class="tab-btn" data-view="profile"><span class="icon">⚙️</span>Profile</button>
+    <button class="tab-btn" data-view="teams" id="tab-teams-btn" style="display:none;"><span class="icon">🚩</span>Teams</button>
   </nav>
 </div>
 

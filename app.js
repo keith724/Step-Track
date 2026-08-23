@@ -9,7 +9,57 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0005"; // bumped by one with every file update shipped
+const APP_VERSION = "0006"; // bumped by one with every file update shipped
+
+/* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
+let TEAMS_LIST = []; // [{ id, name, inviteCode }]
+
+async function loadTeamsList(){
+  try{
+    const snap = await db.collection("teams").get();
+    TEAMS_LIST = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    TEAMS_LIST.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }catch(e){
+    console.error("Couldn't load teams", e);
+    TEAMS_LIST = [];
+  }
+}
+
+function findTeamByInviteCode(code){
+  return TEAMS_LIST.find(t => t.inviteCode === code);
+}
+
+function teamNameById(id){
+  if(!id) return "No team";
+  const t = TEAMS_LIST.find(x => x.id === id);
+  return t ? t.name : "Unknown team";
+}
+
+// One-time migration: if the database has no teams yet, seed it from the
+// SEED_TEAMS object in firebase-config.js, then never touch that object
+// again. Only the admin account has permission to write here, so this is
+// only attempted when they're the one signed in.
+async function seedTeamsIfEmpty(){
+  try{
+    const snap = await db.collection("teams").get();
+    if(!snap.empty) return;
+    const codes = Object.keys(SEED_TEAMS);
+    for(const code of codes){
+      const t = SEED_TEAMS[code];
+      await db.collection("teams").doc(t.id).set({
+        name: t.name, inviteCode: code, createdAt: Date.now()
+      });
+    }
+    await loadTeamsList();
+  }catch(e){
+    console.error("Couldn't seed teams", e);
+  }
+}
+
+// Teams need to be readable before anyone has signed in (the sign-up form
+// has to validate an invite code against them), so load them immediately
+// rather than waiting for auth state.
+loadTeamsList();
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function todayStr(){
@@ -181,7 +231,8 @@ document.getElementById("signup-btn").addEventListener("click", async () => {
   errEl.textContent = "";
 
   if(!name){ errEl.textContent = "Enter your name."; return; }
-  const team = TEAMS[invite];
+  if(TEAMS_LIST.length === 0) await loadTeamsList(); // in case this loaded before Firestore responded
+  const team = findTeamByInviteCode(invite);
   if(!team){ errEl.textContent = "That invite code doesn't match."; return; }
   if(!email || !password){ errEl.textContent = "Enter an email and password."; return; }
 
@@ -222,7 +273,7 @@ async function boot(){
   document.getElementById("app-version").textContent = `Version ${APP_VERSION}`;
 
   await loadProfile();
-  document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${profile.teamName || ""}`;
+  document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${teamNameById(profile.teamId)}`;
 
   wireTabs();
   viewingTeamId = profile.teamId;
@@ -230,7 +281,7 @@ async function boot(){
   wireProfile();
   wireWellness();
   wireChallengeAdmin();
-  wireMemberAdmin();
+  wireTeamsTab();
   wireBoardTeamSwitcher();
 
   await refreshToday();
@@ -278,10 +329,9 @@ async function loadProfile(){
   // absent) gets defaulted to the first team. If an admin has deliberately
   // set someone to "no team" (teamId explicitly ""), that's left alone —
   // it's a real choice, not a legacy gap.
-  if(profile.teamId === undefined){
-    const firstKey = Object.keys(TEAMS)[0];
-    profile.teamId = TEAMS[firstKey].id;
-    profile.teamName = TEAMS[firstKey].name;
+  if(profile.teamId === undefined && TEAMS_LIST.length > 0){
+    profile.teamId = TEAMS_LIST[0].id;
+    profile.teamName = TEAMS_LIST[0].name;
     await db.collection("users").doc(uid).set(
       { teamId: profile.teamId, teamName: profile.teamName }, { merge: true }
     );
@@ -338,7 +388,7 @@ function wireToday(){
     const card = document.getElementById("steps-admin-team-card");
     const box = document.getElementById("steps-team-checkboxes");
     card.style.display = "block";
-    box.innerHTML = Object.values(TEAMS).map(t =>
+    box.innerHTML = TEAMS_LIST.map(t =>
       `<label class="checkbox-row"><input type="checkbox" class="steps-team-checkbox" value="${t.id}"><span>${t.name}</span></label>`
     ).join("");
     // default: whichever teams you last had ticked, remembered on this device
@@ -523,7 +573,7 @@ function wireBoardTeamSwitcher(){
   const select = document.getElementById("board-team-select");
   card.style.display = "block";
 
-  select.innerHTML = Object.values(TEAMS).map(t =>
+  select.innerHTML = TEAMS_LIST.map(t =>
     `<option value="${t.id}">${t.name}</option>`
   ).join("");
   select.value = profile.teamId;
@@ -794,7 +844,7 @@ function wireChallengeAdmin(){
   card.style.display = "block";
 
   const teamSelect = document.getElementById("challenge-team-select");
-  teamSelect.innerHTML = Object.values(TEAMS).map(t =>
+  teamSelect.innerHTML = TEAMS_LIST.map(t =>
     `<option value="${t.id}">${t.name}</option>`
   ).join("");
   teamSelect.value = profile.teamId; // default to the admin's own team
@@ -853,12 +903,97 @@ async function loadChallengeIntoAdminForm(teamId){
 }
 
 /* ---------- Member management (only keith@9cr.uk can see/edit this) ---------- */
-function wireMemberAdmin(){
+/* ---------- Teams tab (only keith@9cr.uk can see/use this) ---------- */
+async function wireTeamsTab(){
   const userEmail = (auth.currentUser.email || "").toLowerCase();
   if(userEmail !== ADMIN_EMAIL.toLowerCase()) return;
 
-  document.getElementById("admin-members-card").style.display = "block";
-  loadAllMembers();
+  document.getElementById("tab-teams-btn").style.display = "flex";
+
+  await seedTeamsIfEmpty();
+  await loadTeamsList();
+  renderTeamsList();
+  await loadAllMembers();
+
+  document.getElementById("add-team-btn").addEventListener("click", async () => {
+    const nameInput = document.getElementById("new-team-name");
+    const codeInput = document.getElementById("new-team-code");
+    const statusEl = document.getElementById("add-team-status");
+    const name = nameInput.value.trim();
+    const code = codeInput.value.trim();
+
+    if(!name || !code){ statusEl.textContent = "Enter both a team name and an invite code."; return; }
+    if(findTeamByInviteCode(code)){ statusEl.textContent = "That invite code is already in use by another team."; return; }
+
+    const newId = "team-" + Date.now().toString(36);
+    try{
+      await db.collection("teams").doc(newId).set({
+        name, inviteCode: code, createdAt: Date.now()
+      });
+      await loadTeamsList();
+      renderTeamsList();
+      nameInput.value = "";
+      codeInput.value = "";
+      statusEl.textContent = `Added ${name}.`;
+    }catch(e){
+      console.error(e);
+      statusEl.textContent = "Couldn't save — check your connection.";
+    }
+  });
+}
+
+function renderTeamsList(){
+  const el = document.getElementById("teams-list");
+  if(TEAMS_LIST.length === 0){
+    el.innerHTML = `<div class="empty">No teams yet — add one above.</div>`;
+    return;
+  }
+
+  el.innerHTML = TEAMS_LIST.map(t => `
+    <div style="padding:12px 0; border-bottom:1px solid rgba(245,241,232,0.06);">
+      <div style="margin-bottom:8px;">
+        <label style="font-size:11px;">Team name</label>
+        <input type="text" class="team-name-input" data-id="${t.id}" value="${t.name.replace(/"/g, "&quot;")}">
+      </div>
+      <div class="row" style="gap:8px; align-items:flex-end;">
+        <div style="flex:1;">
+          <label style="font-size:11px;">Invite code</label>
+          <input type="text" class="team-code-input" data-id="${t.id}" value="${t.inviteCode.replace(/"/g, "&quot;")}">
+        </div>
+        <button class="ghost team-save-btn" data-id="${t.id}" style="width:auto; padding:12px 18px;">Save</button>
+      </div>
+    </div>
+  `).join("");
+
+  el.querySelectorAll(".team-save-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      const nameInput = el.querySelector(`.team-name-input[data-id="${id}"]`);
+      const codeInput = el.querySelector(`.team-code-input[data-id="${id}"]`);
+      const newName = nameInput.value.trim();
+      const newCode = codeInput.value.trim();
+
+      if(!newName || !newCode){ toast("Name and invite code can't be empty"); return; }
+      const clash = TEAMS_LIST.find(t => t.inviteCode === newCode && t.id !== id);
+      if(clash){ toast(`That code is already used by ${clash.name}`); return; }
+
+      try{
+        await db.collection("teams").doc(id).set({ name: newName, inviteCode: newCode }, { merge: true });
+        await loadTeamsList();
+        toast("Team updated");
+        renderTeamsList();
+        if(document.getElementById("admin-members-list")) await loadAllMembers();
+        if(document.getElementById("header-sub")) await refreshHeaderIfSameTeam();
+      }catch(e){
+        console.error(e);
+        toast("Couldn't save — check your connection");
+      }
+    });
+  });
+}
+
+async function refreshHeaderIfSameTeam(){
+  document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${teamNameById(profile.teamId)}`;
 }
 
 async function loadAllMembers(){
@@ -875,7 +1010,7 @@ async function loadAllMembers(){
       return;
     }
 
-    const teamOptions = Object.values(TEAMS).map(t => `<option value="${t.id}">${t.name}</option>`).join("");
+    const teamOptions = TEAMS_LIST.map(t => `<option value="${t.id}">${t.name}</option>`).join("");
 
     listEl.innerHTML = members.map(m => `
       <div class="row between" style="padding:10px 0; border-bottom:1px solid rgba(245,241,232,0.06); gap:8px;">
@@ -899,7 +1034,7 @@ async function loadAllMembers(){
       sel.addEventListener("change", async () => {
         const memberUid = sel.dataset.uid;
         const newTeamId = sel.value; // "" means no team at all
-        const team = Object.values(TEAMS).find(t => t.id === newTeamId);
+        const team = TEAMS_LIST.find(t => t.id === newTeamId);
         try{
           await db.collection("users").doc(memberUid).set({
             teamId: newTeamId,
@@ -1239,7 +1374,7 @@ function wireProfile(){
     try{
       await db.collection("users").doc(uid).set(data, { merge: true });
       profile = Object.assign({}, profile, data);
-      document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${profile.teamName || ""}`;
+      document.getElementById("header-sub").textContent = `Welcome back, ${profile.name} · ${teamNameById(profile.teamId)}`;
       toast("Profile saved");
       await refreshToday();
       await refreshHistory();
