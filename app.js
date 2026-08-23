@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0008"; // bumped by one with every file update shipped
+const APP_VERSION = "0009"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -646,6 +646,34 @@ async function fetchTeamEntries(teamId, range){
   return { docs: [...newSnap.docs, ...oldSnap.docs], windowStart };
 }
 
+function computeReportWindow(memberEarliest, nominalStart, usersRoster){
+  // Finds the earliest date the report can safely start from, requiring at
+  // least 4 people to already have data by that point — never further back
+  // than that, even if some individuals' data goes back further. Falls back
+  // to requiring everyone (rather than 4) if fewer than 4 people have any
+  // data at all, since "at least 4" can't otherwise be satisfied.
+  const idsWithData = Object.keys(memberEarliest);
+  let reportStart;
+
+  if(idsWithData.length === 0){
+    reportStart = nominalStart || todayStr();
+  }else{
+    const sortedDates = idsWithData.map(id => memberEarliest[id]).sort();
+    const threshold = sortedDates.length >= 4 ? sortedDates[3] : sortedDates[sortedDates.length - 1];
+    reportStart = nominalStart && nominalStart > threshold ? nominalStart : threshold;
+  }
+
+  const missingNames = [];
+  Object.keys(usersRoster).forEach(id => {
+    const earliest = memberEarliest[id];
+    if(!earliest || earliest > reportStart){
+      missingNames.push(usersRoster[id].name || "Friend");
+    }
+  });
+
+  return { reportStart, missingNames };
+}
+
 async function refreshBoard(){
   const boardEl = document.getElementById("board-list");
   const noteEl = document.getElementById("board-coverage-note");
@@ -706,30 +734,30 @@ async function refreshBoard(){
     if(range === "today"){
       days = 1;
     }else if(range === "alltime"){
-      const idsWithData = Object.keys(memberEarliest);
-      if(idsWithData.length > 0){
-        const commonStart = idsWithData.reduce((max, id) => memberEarliest[id] > max ? memberEarliest[id] : max, idsWithData[0] && memberEarliest[idsWithData[0]]);
-        usableDocs = entryDocs.filter(d => d.data().date >= commonStart);
-        days = daysBetweenInclusive(commonStart, todayStr());
-        noteEl.textContent = `All-time totals start from ${commonStart} — the earliest date every current participant has data from.`;
-        noteEl.style.display = "block";
-      }else{
-        days = 1;
-      }
+      const { reportStart, missingNames } = computeReportWindow(memberEarliest, null, users);
+      usableDocs = entryDocs.filter(d => d.data().date >= reportStart);
+      days = daysBetweenInclusive(reportStart, todayStr());
+      noteEl.textContent = `Reporting from ${reportStart} — the earliest date at least 4 current participants have data from.`
+        + (missingNames.length > 0 ? ` ${missingNames.join(", ")} don't have data going back that far.` : "");
+      noteEl.style.display = "block";
+    }else if(range === "7" || range === "30"){
+      const { reportStart, missingNames } = computeReportWindow(memberEarliest, windowStart, users);
+      usableDocs = entryDocs.filter(d => d.data().date >= reportStart);
+      days = daysBetweenInclusive(reportStart, todayStr());
+      noteEl.textContent = `Reporting from ${reportStart}.`
+        + (missingNames.length > 0 ? ` ${missingNames.join(", ")} don't have data going back that far.` : "");
+      noteEl.style.display = "block";
     }else{
-      // 7 days / 30 days / challenge: flag anyone whose data doesn't reach
-      // back to the start of the window (partial coverage skews their total).
-      days = range === "challenge"
-        ? daysBetweenInclusive(challenge.startDate, challenge.endDate < todayStr() ? challenge.endDate : todayStr())
-        : parseInt(range, 10);
+      // challenge: flag anyone whose data doesn't reach back to the start
+      // of the challenge period (partial coverage skews their total).
+      days = daysBetweenInclusive(challenge.startDate, challenge.endDate < todayStr() ? challenge.endDate : todayStr());
 
       const short = Object.keys(memberEarliest)
         .filter(id => memberEarliest[id] > windowStart)
         .map(id => (users[id] && users[id].name) || "Someone");
 
       if(short.length > 0){
-        const label = range === "challenge" ? "the challenge period" : `the full ${range} days`;
-        noteEl.textContent = `Note: ${short.join(", ")} don't have data going back ${label} — their totals reflect fewer days.`;
+        noteEl.textContent = `Note: ${short.join(", ")} don't have data going back the full challenge period — their totals reflect fewer days.`;
         noteEl.style.display = "block";
       }
     }
