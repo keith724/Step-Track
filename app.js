@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0006"; // bumped by one with every file update shipped
+const APP_VERSION = "0008"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -961,6 +961,7 @@ function renderTeamsList(){
           <input type="text" class="team-code-input" data-id="${t.id}" value="${t.inviteCode.replace(/"/g, "&quot;")}">
         </div>
         <button class="ghost team-save-btn" data-id="${t.id}" style="width:auto; padding:12px 18px;">Save</button>
+        <button class="team-delete-btn" data-id="${t.id}" data-name="${t.name.replace(/"/g, "&quot;")}" title="Delete team" style="background:none; border:none; color:#e0785a; font-size:18px; padding:10px 6px; cursor:pointer; flex-shrink:0;">🗑</button>
       </div>
     </div>
   `).join("");
@@ -990,6 +991,45 @@ function renderTeamsList(){
       }
     });
   });
+
+  el.querySelectorAll(".team-delete-btn").forEach(btn => {
+    btn.addEventListener("click", () => deleteTeam(btn.dataset.id, btn.dataset.name));
+  });
+}
+
+async function deleteTeam(teamId, teamName){
+  try{
+    const snap = await db.collection("users").where("teamId", "==", teamId).get();
+    const members = snap.docs.map(d => d.data().name || "Unnamed");
+
+    let confirmMessage;
+    if(members.length === 0){
+      confirmMessage = `Delete ${teamName}? No members are currently on this team.\n\nThis can't be undone. Continue?`;
+    }else{
+      confirmMessage =
+        `Delete ${teamName}?\n\n` +
+        `The following ${members.length} member(s) will be set to "No team" — they'll keep their account and past step history, but won't count toward any leaderboard until reassigned:\n\n` +
+        members.map(n => `• ${n}`).join("\n") +
+        `\n\nThis can't be undone. Continue?`;
+    }
+
+    if(!window.confirm(confirmMessage)) return;
+
+    for(const doc of snap.docs){
+      await db.collection("users").doc(doc.id).set({ teamId: "", teamName: "" }, { merge: true });
+    }
+
+    await db.collection("teams").doc(teamId).delete();
+    await db.collection("challenges").doc(teamId).delete().catch(() => {}); // harmless if none exists
+
+    await loadTeamsList();
+    renderTeamsList();
+    await loadAllMembers();
+    toast(`Deleted ${teamName}`);
+  }catch(e){
+    console.error(e);
+    toast("Couldn't delete — check your connection");
+  }
 }
 
 async function refreshHeaderIfSameTeam(){
