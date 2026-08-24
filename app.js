@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0010"; // bumped by one with every file update shipped
+const APP_VERSION = "0011"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -652,18 +652,27 @@ async function fetchTeamEntries(teamId, range){
 function computeReportWindow(memberEarliest, nominalStart, usersRoster){
   // Finds the earliest date the report can safely start from, requiring at
   // least 4 people to already have data by that point — never further back
-  // than that, even if some individuals' data goes back further. Falls back
-  // to requiring everyone (rather than 4) if fewer than 4 people have any
-  // data at all, since "at least 4" can't otherwise be satisfied.
+  // than that, even if some individuals' data goes back further.
+  //
+  // If fewer than 4 people have ever logged anything, "at least 4" simply
+  // can't be satisfied — in that case we deliberately do NOT trim any
+  // further than the window already naturally is (the nominal 7/30-day
+  // start, or the earliest available data for all-time). Using the most
+  // recent of a small handful of people's first-ever entries as a cutoff
+  // would let one brand-new team member collapse the whole window down to
+  // almost nothing, which is the opposite of what this feature is for.
   const idsWithData = Object.keys(memberEarliest);
   let reportStart;
 
   if(idsWithData.length === 0){
     reportStart = nominalStart || todayStr();
-  }else{
+  }else if(idsWithData.length >= 4){
     const sortedDates = idsWithData.map(id => memberEarliest[id]).sort();
-    const threshold = sortedDates.length >= 4 ? sortedDates[3] : sortedDates[sortedDates.length - 1];
+    const threshold = sortedDates[3];
     reportStart = nominalStart && nominalStart > threshold ? nominalStart : threshold;
+  }else{
+    const earliestAvailable = idsWithData.map(id => memberEarliest[id]).sort()[0];
+    reportStart = nominalStart || earliestAvailable;
   }
 
   const missingNames = [];
