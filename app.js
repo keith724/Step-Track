@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0011"; // bumped by one with every file update shipped
+const APP_VERSION = "0012"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
