@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0012"; // bumped by one with every file update shipped
+const APP_VERSION = "0013"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -181,6 +181,7 @@ let lastBoardRows = []; // cached leaderboard rows, so paging doesn't need a ref
 let lastBoardSortMode = "total";
 let lastBoardUnit = "km";
 let boardPage = 0;
+let boardSelectedDate = null; // which day is shown when range === "today"
 const BOARD_PAGE_SIZE = 8;
 
 /* ---------- Auth gate UI wiring ---------- */
@@ -297,7 +298,15 @@ async function boot(){
   await loadWeightForDate(todayStr());
   await loadWaterInputForDate(todayStr());
 
-  document.getElementById("board-range").addEventListener("change", refreshBoard);
+  document.getElementById("board-range").addEventListener("change", () => {
+    if(document.getElementById("board-range").value === "today"){
+      boardSelectedDate = todayStr();
+    }
+    updateBoardDayNavVisibility();
+    refreshBoard();
+  });
+  wireBoardDayNav();
+  updateBoardDayNavVisibility();
   document.querySelectorAll('input[name="board-sort"]').forEach(radio => {
     radio.addEventListener("change", refreshBoard);
   });
@@ -637,8 +646,9 @@ async function fetchTeamEntries(teamId, range){
     oldQuery = oldQuery.where("date", ">=", challenge.startDate).where("date", "<=", challenge.endDate);
     windowStart = challenge.startDate;
   }else if(range === "today"){
-    newQuery = newQuery.where("date", "==", todayStr());
-    oldQuery = oldQuery.where("date", "==", todayStr());
+    const day = boardSelectedDate || todayStr();
+    newQuery = newQuery.where("date", "==", day);
+    oldQuery = oldQuery.where("date", "==", day);
   }else if(range !== "alltime"){
     windowStart = daysAgoStr(parseInt(range, 10));
     newQuery = newQuery.where("date", ">=", windowStart);
@@ -647,6 +657,47 @@ async function fetchTeamEntries(teamId, range){
 
   const [newSnap, oldSnap] = await Promise.all([newQuery.get(), oldQuery.get()]);
   return { docs: [...newSnap.docs, ...oldSnap.docs], windowStart };
+}
+
+function wireBoardDayNav(){
+  document.getElementById("board-day-prev").addEventListener("click", () => {
+    const d = new Date(boardSelectedDate + "T00:00:00");
+    d.setDate(d.getDate() - 1);
+    boardSelectedDate = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    updateBoardDayNavVisibility();
+    refreshBoard();
+  });
+
+  document.getElementById("board-day-next").addEventListener("click", () => {
+    if(boardSelectedDate >= todayStr()) return; // can't navigate into the future
+    const d = new Date(boardSelectedDate + "T00:00:00");
+    d.setDate(d.getDate() + 1);
+    boardSelectedDate = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    updateBoardDayNavVisibility();
+    refreshBoard();
+  });
+
+  document.getElementById("board-day-picker").addEventListener("change", (e) => {
+    if(!e.target.value) return;
+    boardSelectedDate = e.target.value;
+    updateBoardDayNavVisibility();
+    refreshBoard();
+  });
+}
+
+function updateBoardDayNavVisibility(){
+  const range = document.getElementById("board-range").value;
+  const nav = document.getElementById("board-day-nav");
+  if(range === "today"){
+    if(!boardSelectedDate) boardSelectedDate = todayStr();
+    nav.style.display = "flex";
+    const picker = document.getElementById("board-day-picker");
+    picker.max = todayStr();
+    picker.value = boardSelectedDate;
+    document.getElementById("board-day-next").disabled = boardSelectedDate >= todayStr();
+  }else{
+    nav.style.display = "none";
+  }
 }
 
 function computeReportWindow(memberEarliest, nominalStart, usersRoster){
