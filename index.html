@@ -194,6 +194,27 @@
         </div>
         <button class="primary" id="save-weight" style="margin-top:12px;">Save weight for this date</button>
 
+        <div class="list-item" style="margin-top:16px; border-top:1px solid rgba(245,241,232,0.06);">
+          <button type="button" class="list-item-header" data-target="weight-target-body">
+            <span>🎯 <span id="weight-target-summary">Set a target weight</span></span>
+            <span class="chevron">›</span>
+          </button>
+          <div class="list-item-body" id="weight-target-body">
+            <div style="margin-bottom:12px;">
+              <label id="weight-target-label">Target weight (kg)</label>
+              <input type="number" step="0.1" id="weight-target-input" inputmode="decimal" placeholder="e.g. 70">
+            </div>
+            <div style="margin-bottom:12px;">
+              <label>Target date</label>
+              <input type="date" id="weight-target-date">
+            </div>
+            <div class="row" style="gap:8px;">
+              <button class="primary" id="save-weight-target" style="flex:1;">Save target</button>
+              <button class="ghost" id="clear-weight-target" style="width:auto; padding:13px 16px;">Clear</button>
+            </div>
+          </div>
+        </div>
+
         <div class="chart-wrap"><canvas id="weight-chart" height="160"></canvas></div>
         <div id="weight-history" style="margin-top:6px;"></div>
       </div>

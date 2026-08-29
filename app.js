@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0015"; // bumped by one with every file update shipped
+const APP_VERSION = "0016"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -182,6 +182,7 @@ let lastBoardSortMode = "total";
 let lastBoardUnit = "km";
 let boardPage = 0;
 let boardSelectedDate = null; // which day is shown when range === "today"
+let weightTarget = null; // { targetKg, targetDate } — private, per-user
 const BOARD_PAGE_SIZE = 8;
 
 /* ---------- Auth gate UI wiring ---------- */
@@ -362,6 +363,9 @@ async function loadProfile(){
   document.querySelector(`input[name="height-unit"][value="${profile.heightUnit}"]`).checked = true;
   document.querySelector(`input[name="weight-unit"][value="${profile.weightUnit}"]`).checked = true;
   updateWeightUnitLabel();
+  weightTarget = profile.weightTarget || null;
+  updateWeightTargetSummary();
+  populateWeightTargetFields();
   document.getElementById("profile-team").textContent = profile.teamName || "";
 
   if(profile.heightCm){
@@ -1262,6 +1266,49 @@ function wireWellness(){
   weightDate.value = todayStr();
   weightDate.addEventListener("change", () => loadWeightForDate(weightDate.value));
 
+  // Weight target: collapsible panel + save/clear
+  wireListItemToggles(document.getElementById("weight-target-body").closest(".card"));
+
+  document.getElementById("save-weight-target").addEventListener("click", async () => {
+    const raw = parseFloat(document.getElementById("weight-target-input").value);
+    const targetDate = document.getElementById("weight-target-date").value;
+    if(isNaN(raw) || raw <= 0){ toast("Enter a valid target weight"); return; }
+    if(!targetDate){ toast("Pick a target date"); return; }
+
+    const targetKg = +unitToKg(raw, profile.weightUnit).toFixed(2);
+    try{
+      await db.collection("users").doc(uid).set({
+        weightTarget: { targetKg, targetDate, updatedAt: Date.now() }
+      }, { merge: true });
+      weightTarget = { targetKg, targetDate };
+      profile.weightTarget = weightTarget;
+      updateWeightTargetSummary();
+      toast("Target saved");
+      await refreshWeight();
+    }catch(e){
+      console.error(e);
+      toast("Couldn't save — check your connection");
+    }
+  });
+
+  document.getElementById("clear-weight-target").addEventListener("click", async () => {
+    try{
+      await db.collection("users").doc(uid).set({
+        weightTarget: firebase.firestore.FieldValue.delete()
+      }, { merge: true });
+      weightTarget = null;
+      profile.weightTarget = null;
+      document.getElementById("weight-target-input").value = "";
+      document.getElementById("weight-target-date").value = "";
+      updateWeightTargetSummary();
+      toast("Target cleared");
+      await refreshWeight();
+    }catch(e){
+      console.error(e);
+      toast("Couldn't clear — check your connection");
+    }
+  });
+
   const waterDate = document.getElementById("water-date");
   waterDate.max = todayStr();
   waterDate.value = todayStr();
@@ -1274,6 +1321,8 @@ function wireWellness(){
     radio.addEventListener("change", async () => {
       profile.weightUnit = radio.value;
       updateWeightUnitLabel();
+      updateWeightTargetSummary();
+      populateWeightTargetFields();
       await db.collection("users").doc(uid).set({ weightUnit: radio.value }, { merge: true });
       await refreshWeight();
     });
@@ -1375,6 +1424,28 @@ async function loadWaterInputForDate(date){
 
 function updateWeightUnitLabel(){
   document.getElementById("weight-input-label").textContent = `Log today's weight (${weightUnitLabel(profile.weightUnit)})`;
+  const targetLabel = document.getElementById("weight-target-label");
+  if(targetLabel) targetLabel.textContent = `Target weight (${weightUnitLabel(profile.weightUnit)})`;
+}
+
+function updateWeightTargetSummary(){
+  const el = document.getElementById("weight-target-summary");
+  if(!el) return;
+  if(weightTarget && weightTarget.targetKg && weightTarget.targetDate){
+    const unit = profile.weightUnit;
+    el.textContent = `Target: ${kgToUnit(weightTarget.targetKg, unit).toFixed(1)} ${weightUnitLabel(unit)} by ${weightTarget.targetDate}`;
+  }else{
+    el.textContent = "Set a target weight";
+  }
+}
+
+function populateWeightTargetFields(){
+  if(!weightTarget) return;
+  const unit = profile.weightUnit;
+  const input = document.getElementById("weight-target-input");
+  const dateInput = document.getElementById("weight-target-date");
+  if(input && weightTarget.targetKg) input.value = kgToUnit(weightTarget.targetKg, unit).toFixed(1);
+  if(dateInput && weightTarget.targetDate) dateInput.value = weightTarget.targetDate;
 }
 
 function buildLineChart(canvasId, existing, labels, data, label, color){
@@ -1458,16 +1529,108 @@ async function refreshWeight(){
     }).join("");
 
     const docsAsc = docsDesc.slice().reverse();
-    weightChart = buildLineChart(
-      "weight-chart", weightChart,
-      docsAsc.map(function(e){ return shortDate(e.date); }),
-      docsAsc.map(function(e){ return +kgToUnit(e.weightKg, unit).toFixed(1); }),
-      "Weight (" + weightUnitLabel(unit) + ")",
-      "#E8B93F"
-    );
+    renderWeightChart(docsAsc, unit);
   }catch(e){
     console.error(e);
   }
+}
+
+function renderWeightChart(docsAsc, unit){
+  const labels = docsAsc.map(e => shortDate(e.date));
+  const actual = docsAsc.map(e => +kgToUnit(e.weightKg, unit).toFixed(1));
+
+  const datasets = [{
+    label: "Weight (" + weightUnitLabel(unit) + ")",
+    data: actual,
+    borderColor: "#E8B93F",
+    backgroundColor: "#E8B93F",
+    tension: 0.3,
+    pointRadius: 3,
+    fill: false,
+    order: 1
+  }];
+
+  // If a target is set, extend the x-axis out to the target date and draw
+  // a straight "on plan" line from the first logged weight to the target,
+  // plus a shaded tolerance band around it.
+  if(weightTarget && weightTarget.targetKg && weightTarget.targetDate){
+    const startDate = docsAsc[0].date;
+    const startVal = +kgToUnit(docsAsc[0].weightKg, unit).toFixed(1);
+    const targetVal = +kgToUnit(weightTarget.targetKg, unit).toFixed(1);
+    const endDate = weightTarget.targetDate;
+
+    // Build a combined date axis: every logged date, plus the target date
+    // if it falls beyond the last entry.
+    const allDates = docsAsc.map(e => e.date);
+    if(endDate > allDates[allDates.length - 1]) allDates.push(endDate);
+
+    const totalSpan = daysBetweenInclusive(startDate, endDate);
+    const planLine = allDates.map(d => {
+      const elapsed = daysBetweenInclusive(startDate, d);
+      const frac = totalSpan <= 1 ? 1 : Math.min(1, (elapsed - 1) / (totalSpan - 1));
+      return +(startVal + (targetVal - startVal) * frac).toFixed(2);
+    });
+
+    // Tolerance band: ±2% of the starting weight, a reasonable "close
+    // enough to on track" margin that scales with the person's own numbers.
+    const tolerance = Math.abs(startVal) * 0.02;
+
+    labels.length = 0;
+    allDates.forEach(d => labels.push(shortDate(d)));
+    // Pad the actual-weight series with nulls so it stops at the last real
+    // entry rather than being stretched toward the target date.
+    while(actual.length < allDates.length) actual.push(null);
+
+    datasets.push({
+      label: "On plan",
+      data: planLine,
+      borderColor: "#4C9A5B",
+      backgroundColor: "rgba(76,154,91,0.12)",
+      borderDash: [6, 4],
+      pointRadius: 0,
+      tension: 0,
+      fill: false,
+      order: 3
+    });
+    datasets.push({
+      label: "Upper bound",
+      data: planLine.map(v => +(v + tolerance).toFixed(2)),
+      borderColor: "rgba(76,154,91,0.25)",
+      backgroundColor: "rgba(76,154,91,0.12)",
+      pointRadius: 0,
+      tension: 0,
+      fill: "+1",
+      order: 4
+    });
+    datasets.push({
+      label: "Lower bound",
+      data: planLine.map(v => +(v - tolerance).toFixed(2)),
+      borderColor: "rgba(76,154,91,0.25)",
+      backgroundColor: "rgba(76,154,91,0.12)",
+      pointRadius: 0,
+      tension: 0,
+      fill: false,
+      order: 5
+    });
+  }
+
+  const ctx = document.getElementById("weight-chart").getContext("2d");
+  if(weightChart) weightChart.destroy();
+  weightChart = new Chart(ctx, {
+    type: "line",
+    data: { labels: labels, datasets: datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { filter: item => item.datasetIndex === 0 || item.datasetIndex === 1 }
+      },
+      scales: {
+        x: { ticks: { color: "#8A94A6", font: { size: 10 } }, grid: { display: false } },
+        y: { ticks: { color: "#8A94A6", font: { size: 10 } }, grid: { color: "rgba(245,241,232,0.06)" } }
+      }
+    }
+  });
 }
 
 async function refreshWater(){
