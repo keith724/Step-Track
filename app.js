@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0013"; // bumped by one with every file update shipped
+const APP_VERSION = "0014"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -701,26 +701,15 @@ function updateBoardDayNavVisibility(){
 }
 
 function computeReportWindow(memberEarliest, nominalStart, usersRoster){
-  // Finds the earliest date the report can safely start from, requiring at
-  // least 4 people to already have data by that point — never further back
-  // than that, even if some individuals' data goes back further.
-  //
-  // If fewer than 4 people have ever logged anything, "at least 4" simply
-  // can't be satisfied — in that case we deliberately do NOT trim any
-  // further than the window already naturally is (the nominal 7/30-day
-  // start, or the earliest available data for all-time). Using the most
-  // recent of a small handful of people's first-ever entries as a cutoff
-  // would let one brand-new team member collapse the whole window down to
-  // almost nothing, which is the opposite of what this feature is for.
+  // Works out the date the report actually starts from, with no minimum
+  // number of participants required — the window is simply its natural
+  // size: the nominal 7/30-day start, or the earliest data available for
+  // all-time. Still reports who doesn't have data reaching back that far.
   const idsWithData = Object.keys(memberEarliest);
   let reportStart;
 
   if(idsWithData.length === 0){
     reportStart = nominalStart || todayStr();
-  }else if(idsWithData.length >= 4){
-    const sortedDates = idsWithData.map(id => memberEarliest[id]).sort();
-    const threshold = sortedDates[3];
-    reportStart = nominalStart && nominalStart > threshold ? nominalStart : threshold;
   }else{
     const earliestAvailable = idsWithData.map(id => memberEarliest[id]).sort()[0];
     reportStart = nominalStart || earliestAvailable;
@@ -800,7 +789,7 @@ async function refreshBoard(){
       const { reportStart, missingNames } = computeReportWindow(memberEarliest, null, users);
       usableDocs = entryDocs.filter(d => d.data().date >= reportStart);
       days = daysBetweenInclusive(reportStart, todayStr());
-      noteEl.textContent = `Reporting from ${reportStart} — the earliest date at least 4 current participants have data from.`
+      noteEl.textContent = `Reporting from ${reportStart} — the earliest date any data is available from.`
         + (missingNames.length > 0 ? ` Note: ${missingNames.join(", ")} ${dontDoesnt(missingNames.length)} have data going back that far.` : "");
       noteEl.style.display = "block";
     }else if(range === "7" || range === "30"){
