@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0016"; // bumped by one with every file update shipped
+const APP_VERSION = "0017"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -183,6 +183,7 @@ let lastBoardUnit = "km";
 let boardPage = 0;
 let boardSelectedDate = null; // which day is shown when range === "today"
 let weightTarget = null; // { targetKg, targetDate } — private, per-user
+let allWeightDocsAsc = []; // full weight history, cached for zoom switching
 const BOARD_PAGE_SIZE = 8;
 
 /* ---------- Auth gate UI wiring ---------- */
@@ -1269,18 +1270,38 @@ function wireWellness(){
   // Weight target: collapsible panel + save/clear
   wireListItemToggles(document.getElementById("weight-target-body").closest(".card"));
 
+  document.querySelectorAll('input[name="weight-zoom"]').forEach(radio => {
+    radio.addEventListener("change", () => {
+      if(allWeightDocsAsc.length > 0) renderWeightChart(allWeightDocsAsc, profile.weightUnit);
+    });
+  });
+
   document.getElementById("save-weight-target").addEventListener("click", async () => {
     const raw = parseFloat(document.getElementById("weight-target-input").value);
     const targetDate = document.getElementById("weight-target-date").value;
     if(isNaN(raw) || raw <= 0){ toast("Enter a valid target weight"); return; }
     if(!targetDate){ toast("Pick a target date"); return; }
 
+    // Changing an existing target restarts the plan from today, discarding
+    // the original line — worth warning about, since the old progress line
+    // can't be recovered afterwards.
+    if(weightTarget && weightTarget.targetKg){
+      const proceed = window.confirm(
+        `You already have a target set.\n\n` +
+        `Saving a new one will replace it and start a fresh progress line from today's date — ` +
+        `your original target line will be discarded and can't be recovered.\n\n` +
+        `Continue?`
+      );
+      if(!proceed) return;
+    }
+
     const targetKg = +unitToKg(raw, profile.weightUnit).toFixed(2);
+    const startDate = todayStr();
     try{
       await db.collection("users").doc(uid).set({
-        weightTarget: { targetKg, targetDate, updatedAt: Date.now() }
+        weightTarget: { targetKg, targetDate, startDate, updatedAt: Date.now() }
       }, { merge: true });
-      weightTarget = { targetKg, targetDate };
+      weightTarget = { targetKg, targetDate, startDate };
       profile.weightTarget = weightTarget;
       updateWeightTargetSummary();
       toast("Target saved");
@@ -1433,7 +1454,8 @@ function updateWeightTargetSummary(){
   if(!el) return;
   if(weightTarget && weightTarget.targetKg && weightTarget.targetDate){
     const unit = profile.weightUnit;
-    el.textContent = `Target: ${kgToUnit(weightTarget.targetKg, unit).toFixed(1)} ${weightUnitLabel(unit)} by ${weightTarget.targetDate}`;
+    const from = weightTarget.startDate ? ` (from ${weightTarget.startDate})` : "";
+    el.textContent = `Target: ${kgToUnit(weightTarget.targetKg, unit).toFixed(1)} ${weightUnitLabel(unit)} by ${weightTarget.targetDate}${from}`;
   }else{
     el.textContent = "Set a target weight";
   }
@@ -1499,7 +1521,7 @@ function buildBarChart(canvasId, existing, labels, data, label, color){
 async function refreshWeight(){
   try{
     const snap = await db.collection("users").doc(uid).collection("weightLogs")
-      .orderBy("date", "desc").limit(14).get();
+      .orderBy("date", "desc").limit(400).get();
 
     const historyEl = document.getElementById("weight-history");
     if(snap.empty){
@@ -1523,19 +1545,69 @@ async function refreshWeight(){
       document.getElementById("weight-trend").textContent = "First entry logged";
     }
 
-    historyEl.innerHTML = docsDesc.map(function(e){
+    historyEl.innerHTML = docsDesc.slice(0, 14).map(function(e){
       return '<div class="history-item"><span class="date">' + e.date + '</span><span class="mono">' +
         kgToUnit(e.weightKg, unit).toFixed(1) + " " + weightUnitLabel(unit) + '</span></div>';
     }).join("");
 
     const docsAsc = docsDesc.slice().reverse();
+    allWeightDocsAsc = docsAsc; // cached so zoom changes don't need a refetch
     renderWeightChart(docsAsc, unit);
   }catch(e){
     console.error(e);
   }
 }
 
-function renderWeightChart(docsAsc, unit){
+function getWeightZoom(){
+  const radio = document.querySelector('input[name="weight-zoom"]:checked');
+  return radio ? radio.value : "all";
+}
+
+function offsetDateStr(baseStr, deltaDays){
+  const d = new Date(baseStr + "T00:00:00");
+  d.setDate(d.getDate() + deltaDays);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+
+function renderWeightChart(docsAscFull, unit){
+  const zoom = getWeightZoom();
+  let docsAsc = docsAscFull;
+  let zoomFrom = null, zoomTo = null;
+
+  // When a target is set, its start date is the beginning of the current
+  // plan — "All" means "all of this plan", not every entry ever logged.
+  const planStart = (weightTarget && weightTarget.startDate) ? weightTarget.startDate : null;
+
+  if(zoom === "all"){
+    if(planStart) docsAsc = docsAscFull.filter(e => e.date >= planStart);
+  }else{
+    const span = zoom === "week" ? 7 : 30;
+    zoomFrom = offsetDateStr(todayStr(), -span);
+    zoomTo = offsetDateStr(todayStr(), span);
+    docsAsc = docsAscFull.filter(e => e.date >= zoomFrom && e.date <= zoomTo);
+    if(planStart) docsAsc = docsAsc.filter(e => e.date >= planStart);
+  }
+
+  if(docsAsc.length === 0){
+    // Nothing logged inside this zoom window — show an empty chart rather
+    // than crashing on docsAsc[0] further down.
+    const ctxEmpty = document.getElementById("weight-chart").getContext("2d");
+    if(weightChart) weightChart.destroy();
+    weightChart = new Chart(ctxEmpty, {
+      type: "line",
+      data: { labels: [], datasets: [] },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: "#8A94A6", font: { size: 10 } }, grid: { display: false } },
+          y: { ticks: { color: "#8A94A6", font: { size: 10 } }, grid: { color: "rgba(245,241,232,0.06)" } }
+        }
+      }
+    });
+    return;
+  }
+
   const labels = docsAsc.map(e => shortDate(e.date));
   const actual = docsAsc.map(e => +kgToUnit(e.weightKg, unit).toFixed(1));
 
@@ -1550,22 +1622,43 @@ function renderWeightChart(docsAsc, unit){
     order: 1
   }];
 
-  // If a target is set, extend the x-axis out to the target date and draw
-  // a straight "on plan" line from the first logged weight to the target,
+  // If a target is set, draw a straight "on plan" line running from the
+  // weight recorded when the target was created, to the target itself,
   // plus a shaded tolerance band around it.
   if(weightTarget && weightTarget.targetKg && weightTarget.targetDate){
-    const startDate = docsAsc[0].date;
-    const startVal = +kgToUnit(docsAsc[0].weightKg, unit).toFixed(1);
+    // The plan line is anchored to the date the target was CREATED (not the
+    // first weight ever logged), so it represents the current plan only.
+    // Its slope stays fixed regardless of zoom — zoom only changes which
+    // part of the line is visible.
+    const startDate = weightTarget.startDate || docsAscFull[0].date;
+
+    // Starting weight = the entry on or nearest before the target's start
+    // date; falls back to the earliest available if the target predates
+    // every logged entry.
+    const atOrBefore = docsAscFull.filter(e => e.date <= startDate);
+    const anchorDoc = atOrBefore.length > 0
+      ? atOrBefore[atOrBefore.length - 1]
+      : docsAscFull[0];
+    const startVal = +kgToUnit(anchorDoc.weightKg, unit).toFixed(1);
     const targetVal = +kgToUnit(weightTarget.targetKg, unit).toFixed(1);
     const endDate = weightTarget.targetDate;
 
-    // Build a combined date axis: every logged date, plus the target date
-    // if it falls beyond the last entry.
+    // Which dates to plot the plan line across: the visible entries, plus
+    // the plan's own start date if it isn't already represented, plus the
+    // target date if it sits beyond them — but never outside the zoom
+    // window when zoomed in.
     const allDates = docsAsc.map(e => e.date);
-    if(endDate > allDates[allDates.length - 1]) allDates.push(endDate);
+    if(allDates.length === 0 || allDates[0] > startDate){
+      if(zoom === "all" || startDate >= zoomFrom) allDates.unshift(startDate);
+    }
+    const lastVisible = allDates[allDates.length - 1];
+    if(endDate > lastVisible && (zoom === "all" || endDate <= zoomTo)){
+      allDates.push(endDate);
+    }
 
     const totalSpan = daysBetweenInclusive(startDate, endDate);
     const planLine = allDates.map(d => {
+      if(d < startDate) return null; // plan hasn't begun yet on this date
       const elapsed = daysBetweenInclusive(startDate, d);
       const frac = totalSpan <= 1 ? 1 : Math.min(1, (elapsed - 1) / (totalSpan - 1));
       return +(startVal + (targetVal - startVal) * frac).toFixed(2);
@@ -1594,7 +1687,7 @@ function renderWeightChart(docsAsc, unit){
     });
     datasets.push({
       label: "Upper bound",
-      data: planLine.map(v => +(v + tolerance).toFixed(2)),
+      data: planLine.map(v => v === null ? null : +(v + tolerance).toFixed(2)),
       borderColor: "rgba(76,154,91,0.25)",
       backgroundColor: "rgba(76,154,91,0.12)",
       pointRadius: 0,
@@ -1604,7 +1697,7 @@ function renderWeightChart(docsAsc, unit){
     });
     datasets.push({
       label: "Lower bound",
-      data: planLine.map(v => +(v - tolerance).toFixed(2)),
+      data: planLine.map(v => v === null ? null : +(v - tolerance).toFixed(2)),
       borderColor: "rgba(76,154,91,0.25)",
       backgroundColor: "rgba(76,154,91,0.12)",
       pointRadius: 0,
