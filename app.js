@@ -9,7 +9,7 @@ const KG_PER_STONE = 6.35029;
 const CM_PER_INCH = 2.54;
 const MILES_PER_KM = 0.621371;
 const ADMIN_EMAIL = "keith@9cr.uk";
-const APP_VERSION = "0017"; // bumped by one with every file update shipped
+const APP_VERSION = "0018"; // bumped by one with every file update shipped
 
 /* ---------- Teams (live from Firestore, editable from the Teams tab) ---------- */
 let TEAMS_LIST = []; // [{ id, name, inviteCode }]
@@ -1276,6 +1276,10 @@ function wireWellness(){
     });
   });
 
+  document.getElementById("show-target-line").addEventListener("change", () => {
+    if(allWeightDocsAsc.length > 0) renderWeightChart(allWeightDocsAsc, profile.weightUnit);
+  });
+
   document.getElementById("save-weight-target").addEventListener("click", async () => {
     const raw = parseFloat(document.getElementById("weight-target-input").value);
     const targetDate = document.getElementById("weight-target-date").value;
@@ -1451,8 +1455,14 @@ function updateWeightUnitLabel(){
 
 function updateWeightTargetSummary(){
   const el = document.getElementById("weight-target-summary");
+  const visibilityRow = document.getElementById("weight-target-visibility");
+  const hasTarget = !!(weightTarget && weightTarget.targetKg && weightTarget.targetDate);
+
+  // The show/hide control is only meaningful once a target actually exists.
+  if(visibilityRow) visibilityRow.style.display = hasTarget ? "flex" : "none";
+
   if(!el) return;
-  if(weightTarget && weightTarget.targetKg && weightTarget.targetDate){
+  if(hasTarget){
     const unit = profile.weightUnit;
     const from = weightTarget.startDate ? ` (from ${weightTarget.startDate})` : "";
     el.textContent = `Target: ${kgToUnit(weightTarget.targetKg, unit).toFixed(1)} ${weightUnitLabel(unit)} by ${weightTarget.targetDate}${from}`;
@@ -1571,12 +1581,16 @@ function offsetDateStr(baseStr, deltaDays){
 
 function renderWeightChart(docsAscFull, unit){
   const zoom = getWeightZoom();
+  const toggle = document.getElementById("show-target-line");
+  const showTarget = toggle ? toggle.checked : true;
   let docsAsc = docsAscFull;
   let zoomFrom = null, zoomTo = null;
 
-  // When a target is set, its start date is the beginning of the current
-  // plan — "All" means "all of this plan", not every entry ever logged.
-  const planStart = (weightTarget && weightTarget.startDate) ? weightTarget.startDate : null;
+  // When a target is set AND its line is being shown, the target's start
+  // date is the beginning of the current plan — "All" then means "all of
+  // this plan" rather than every entry ever logged. With the target line
+  // hidden, "All" reverts to the complete history.
+  const planStart = (showTarget && weightTarget && weightTarget.startDate) ? weightTarget.startDate : null;
 
   if(zoom === "all"){
     if(planStart) docsAsc = docsAscFull.filter(e => e.date >= planStart);
@@ -1625,7 +1639,7 @@ function renderWeightChart(docsAscFull, unit){
   // If a target is set, draw a straight "on plan" line running from the
   // weight recorded when the target was created, to the target itself,
   // plus a shaded tolerance band around it.
-  if(weightTarget && weightTarget.targetKg && weightTarget.targetDate){
+  if(showTarget && weightTarget && weightTarget.targetKg && weightTarget.targetDate){
     // The plan line is anchored to the date the target was CREATED (not the
     // first weight ever logged), so it represents the current plan only.
     // Its slope stays fixed regardless of zoom — zoom only changes which
